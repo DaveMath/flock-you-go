@@ -22,21 +22,21 @@
 // GPIO43 mirroring was part of the earlier dev-board configuration.
 #define MIRROR_SERIAL    0
 
-#define CHANNEL_MODE_FULL_HOP   0
-#define CHANNEL_MODE_CUSTOM     1
-#define CHANNEL_MODE_SINGLE     2
-
-#define CHANNEL_MODE CHANNEL_MODE_FULL_HOP
 #define CHANNEL_DWELL_MS 700
-#define SINGLE_CHANNEL 1
 
-static const uint8_t customChannels[]  = {1, 6, 11};
-static const size_t  customChannelCount = sizeof(customChannels) / sizeof(customChannels[0]);
+typedef enum : uint8_t {
+  SCAN_1_6_11 = 0,
+  SCAN_ALL_CHANNELS = 1,
+} ScanMode;
 
 // Prioritize the three non-overlapping US channels, then fill in the gaps.
 // Channels 12/13 are deliberately excluded from the default regulatory plan.
-static const uint8_t fullHopChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
-static const size_t  fullHopChannelCount = sizeof(fullHopChannels) / sizeof(fullHopChannels[0]);
+static const uint8_t fastScanChannels[] = {1, 6, 11};
+static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
+
+#define LEFT_BUTTON_PIN  1
+#define RIGHT_BUTTON_PIN 42
+#define BUTTON_DEBOUNCE_MS 35
 
 #define HEARTBEAT_MS    30000
 #define RSSI_MIN        -100
@@ -205,8 +205,11 @@ static int           fyLastSaveCount  = 0;
 // ============================================================
 
 static uint8_t  currentChannel = 1;
-static size_t   customChannelIndex = 0;
-static size_t   fullHopIndex = 0;
+static size_t   channelIndex = 0;
+static ScanMode scanMode = SCAN_ALL_CHANNELS;
+static const uint8_t volumeLevels[] = {0, 10, 50, 100};
+static size_t volumeIndex = 3;
+static uint8_t outputVolumePercent = volumeLevels[volumeIndex];
 static unsigned long lastHop = 0;
 static unsigned long lastHeartbeat = 0;
 static volatile bool sniffingStopped = false;
@@ -216,6 +219,16 @@ static volatile uint32_t rxMgmtFrames = 0;
 static volatile uint32_t rxDataFrames = 0;
 static volatile uint32_t rxByChannel[14] = {0};
 static uint32_t channelSwitchFailures = 0;
+
+typedef struct {
+  uint8_t pin;
+  bool rawPressed;
+  bool stablePressed;
+  uint32_t changedAt;
+} ButtonState;
+
+static ButtonState leftButton = {LEFT_BUTTON_PIN, false, false, 0};
+static ButtonState rightButton = {RIGHT_BUTTON_PIN, false, false, 0};
 
 // Dedupe table (small circular, avoids single-slot eviction bug).
 // This is the *serial-rate-limit* dedup — it suppresses beep + emit within
@@ -313,6 +326,7 @@ static void buzzerBeep(unsigned int ms) {
 
 // Two fast ascending beeps — played on the FIRST sighting of a MAC.
 static void newDetectChirp() {
+  if (outputVolumePercent == 0) return;
 #if USE_BUZZER
   tone(BUZZER_PIN, NEW_CHIRP_LO_HZ); delay(NEW_CHIRP_NOTE_MS); noTone(BUZZER_PIN);
   delay(NEW_CHIRP_GAP_MS);
@@ -323,6 +337,7 @@ static void newDetectChirp() {
 // Two monotone beeps — periodic heartbeat while at least one target is still
 // in range (last seen within HB_DEVICE_ACTIVE_MS).
 static void heartbeatBeep() {
+  if (outputVolumePercent == 0) return;
 #if USE_BUZZER
   tone(BUZZER_PIN, HB_BEEP_HZ); delay(HB_BEEP_NOTE_MS); noTone(BUZZER_PIN);
   delay(HB_BEEP_GAP_MS);
@@ -395,12 +410,7 @@ static bool matchSsidKeyword(const char* ssid) {
 }
 
 static const char* channelModeName() {
-  switch (CHANNEL_MODE) {
-    case CHANNEL_MODE_FULL_HOP: return "FULL_HOP";
-    case CHANNEL_MODE_CUSTOM:   return "CUSTOM";
-    case CHANNEL_MODE_SINGLE:   return "SINGLE";
-    default:                    return "UNKNOWN";
-  }
+  return scanMode == SCAN_ALL_CHANNELS ? "ALL_CHANNELS" : "SCAN_1_6_11";
 }
 
 static const char* confidenceName(DetectionConfidence confidence) {
@@ -423,6 +433,66 @@ static bool setScanChannel(uint8_t channel) {
   if (err == ESP_OK) return true;
   channelSwitchFailures++;
   return wifiOk(err, "set_channel");
+}
+
+static const uint8_t* activeChannels(size_t* count) {
+  if (scanMode == SCAN_ALL_CHANNELS) {
+    *count = sizeof(allScanChannels) / sizeof(allScanChannels[0]);
+    return allScanChannels;
+  }
+  *count = sizeof(fastScanChannels) / sizeof(fastScanChannels[0]);
+  return fastScanChannels;
+}
+
+static void selectFirstChannel() {
+  size_t count = 0;
+  const uint8_t* channels = activeChannels(&count);
+  channelIndex = 0;
+  currentChannel = channels[0];
+  setScanChannel(currentChannel);
+  lastHop = millis();
+}
+
+static void initButton(ButtonState* button) {
+  pinMode(button->pin, INPUT_PULLUP);
+  button->rawPressed = digitalRead(button->pin) == LOW;
+  button->stablePressed = button->rawPressed;
+  button->changedAt = millis();
+}
+
+static bool pressedEdge(ButtonState* button) {
+  bool pressed = digitalRead(button->pin) == LOW;
+  uint32_t now = millis();
+  if (pressed != button->rawPressed) {
+    button->rawPressed = pressed;
+    button->changedAt = now;
+  }
+  if (pressed != button->stablePressed &&
+      now - button->changedAt >= BUTTON_DEBOUNCE_MS) {
+    button->stablePressed = pressed;
+    return pressed;
+  }
+  return false;
+}
+
+static void handleButtons() {
+  if (pressedEdge(&leftButton)) {
+    scanMode = scanMode == SCAN_ALL_CHANNELS ? SCAN_1_6_11 : SCAN_ALL_CHANNELS;
+    selectFirstChannel();
+    dualPrintf("[flockyou] scan mode=%s start_channel=%u\n",
+               channelModeName(), currentChannel);
+  }
+
+  if (pressedEdge(&rightButton)) {
+    volumeIndex = (volumeIndex + 1) %
+                  (sizeof(volumeLevels) / sizeof(volumeLevels[0]));
+    outputVolumePercent = volumeLevels[volumeIndex];
+    if (outputVolumePercent == 0) {
+      dualPrintln("[flockyou] alert volume=MUTE");
+    } else {
+      dualPrintf("[flockyou] alert volume=%u%%\n", outputVolumePercent);
+    }
+  }
 }
 
 static inline uint16_t channelFreqMhz(uint8_t ch) {
@@ -453,37 +523,18 @@ static void stopSniffing(const char* reason) {
 }
 
 static void applyInitialChannel() {
-#if CHANNEL_MODE == CHANNEL_MODE_SINGLE
-  currentChannel = SINGLE_CHANNEL;
-#elif CHANNEL_MODE == CHANNEL_MODE_CUSTOM
-  currentChannel = customChannels[0];
-#else
-  currentChannel = fullHopChannels[0];
-#endif
-  setScanChannel(currentChannel);
-  lastHop = millis();  // start dwell timer precisely when channel is first set
+  selectFirstChannel();
 }
 
 static void updateChannelMode() {
   if (sniffingStopped) return;
-#if CHANNEL_MODE == CHANNEL_MODE_SINGLE
-  if (currentChannel != SINGLE_CHANNEL) {
-    currentChannel = SINGLE_CHANNEL;
-    setScanChannel(currentChannel);
-  }
-  return;
-#else
   if (millis() - lastHop < CHANNEL_DWELL_MS) return;
-  #if CHANNEL_MODE == CHANNEL_MODE_CUSTOM
-    customChannelIndex = (customChannelIndex + 1) % customChannelCount;
-    currentChannel = customChannels[customChannelIndex];
-  #else
-    fullHopIndex = (fullHopIndex + 1) % fullHopChannelCount;
-    currentChannel = fullHopChannels[fullHopIndex];
-  #endif
+  size_t count = 0;
+  const uint8_t* channels = activeChannels(&count);
+  channelIndex = (channelIndex + 1) % count;
+  currentChannel = channels[channelIndex];
   setScanChannel(currentChannel);
   lastHop = millis();
-#endif
 }
 
 static void printHeartbeat() {
@@ -1129,6 +1180,8 @@ void setup() {
   delay(300);
 
   const bool displayReady = aipiDisplayBegin();
+  initButton(&leftButton);
+  initButton(&rightButton);
 
 #if MIRROR_SERIAL
   Serial1.begin(115200, SERIAL_8N1, -1, 43);
@@ -1209,12 +1262,14 @@ void setup() {
 }
 
 void loop() {
+  handleButtons();
   updateChannelMode();
   drainAlertQueue();   // Serial.printf happens here, not in callback
   autosaveTick();      // periodic SPIFFS write if dirty
   heartbeatTick();     // audible beep-pair while a target is still in range
   ledTick();           // turn off LED after LED_FLASH_MS
-  aipiDisplayTick(currentChannel, fyDetCount);
+  aipiDisplayTick(currentChannel, fyDetCount,
+                  scanMode == SCAN_ALL_CHANNELS, outputVolumePercent);
   printHeartbeat();
   delay(1);
 }

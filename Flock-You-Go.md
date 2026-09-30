@@ -59,10 +59,12 @@ initialization, then enable it only after `DISPON` completes.
 
 ```cpp
 bool aipiDisplayBegin();
-void aipiDisplayShowScan(uint8_t channel, int detections);
+void aipiDisplayShowScan(uint8_t channel, int detections, bool allChannels,
+                         uint8_t volumePercent);
 void aipiDisplayShowDetection(const char* oui, int8_t rssi,
                               uint8_t channel, uint16_t count);
-void aipiDisplayTick(uint8_t channel, int detections);
+void aipiDisplayTick(uint8_t channel, int detections, bool allChannels,
+                     uint8_t volumePercent);
 ```
 
 The Wi-Fi receive callback never touches the display. `drainAlertQueue()` calls
@@ -93,9 +95,17 @@ The default US channel plan is:
 ```
 
 The dwell time is 700 ms, giving a complete 1-11 sweep in approximately 7.7
-seconds. Channels 12 and 13 are excluded from the default plan. A compile-time
-fast mode retains the `1, 6, 11` sequence for environments where cycle time is
-more important than complete channel coverage.
+seconds. Channels 12 and 13 are excluded from the default plan. The left button
+on GPIO1 switches at runtime between the complete plan and the faster
+`1, 6, 11` sequence. Changing modes immediately selects the first channel in
+the new plan and restarts the dwell timer.
+
+The scan screen writes the selected mode as `ALL CHANNELS` or `SCAN 1-6-11`
+above the live channel number. The right button on GPIO42 cycles the alert
+volume through `MUTE`, `10%`, `50%`, and `100%`, also shown on-screen. Both
+buttons are active-low, use internal pull-ups, and have 35 ms software debounce.
+The volume state gates alert audio, although actual sound remains disabled until
+the ES8311 codec and GPIO9 amplifier path are implemented.
 
 ## Confidence model
 
@@ -152,12 +162,15 @@ After flashing:
 1. The image fills all 128 x 128 pixels without static edge strips.
 2. The header is red, status text is white/gold/green, and colors are not
    exchanged.
-3. The scan channel follows the prioritized 1-11 sequence at 700 ms dwell.
-4. Serial health output shows increasing receive counters with zero queue drops
+3. `ALL CHANNELS` follows the prioritized 1-11 sequence at 700 ms dwell.
+4. The left button switches to `SCAN 1-6-11`, and the displayed channel follows
+   1, 6, 11 before repeating; pressing it again restores `ALL CHANNELS`.
+5. The right button cycles the visible volume through mute, 10%, 50%, and 100%.
+6. Serial health output shows increasing receive counters with zero queue drops
    and channel-switch failures under normal operation.
-5. A medium/high test observation replaces the scan page and returns after 3.5
+7. A medium/high test observation replaces the scan page and returns after 3.5
    seconds; a low-confidence observation is logged without replacing the page.
-6. Detection rendering does not stall channel hopping or USB JSON output.
+8. Detection rendering does not stall channel hopping or USB JSON output.
 
 ## Verified build
 
@@ -166,8 +179,8 @@ the `seeed_xiao_esp32s3` toolchain definition and the repository's 16 MB flash
 override. The passive-scanner revision produced:
 
 ```text
-RAM:   95,292 / 327,680 bytes (29.1%)
-Flash: 694,385 / 6,291,456 bytes (11.0%)
+RAM:   95,308 / 327,680 bytes (29.1%)
+Flash: 695,297 / 6,291,456 bytes (11.1%)
 Image: ESP32-S3 firmware.bin
 ```
 

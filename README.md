@@ -25,8 +25,8 @@ Wi-Fi, USB-C, a WS2812 status LED, and optional battery operation.
 | LCD SCLK | 16 | Implemented |
 | LCD MOSI | 17 | Implemented |
 | LCD reset | 18 | Implemented |
-| Right button | 42 | Reserved |
-| Left button | 1 | Reserved |
+| Right button | 42 | Alert volume: mute, 10%, 50%, 100% |
+| Left button | 1 | Toggle 1/6/11 and all-channel scanning |
 | WS2812 data | 46 | Planned |
 | Speaker amplifier | 9 | Planned |
 
@@ -71,9 +71,16 @@ logging state. A detection temporarily replaces it with:
 
 The radio remains in ESP32 promiscuous mode and passively sweeps US channels
 1-11 in this priority order: `11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7`. The default
-dwell is 700 ms. A faster 1/6/11 mode remains available as a compile-time
-option. The receive callback performs only bounded matching and queues events;
+dwell is 700 ms. Press the left button to switch at runtime between the full
+plan and the faster `1, 6, 11` plan. The active mode is written on-screen as
+`ALL CHANNELS` or `SCAN 1-6-11`. The receive callback performs only bounded
+matching and queues events;
 display rendering, USB output, alerts, and SPIFFS writes happen from `loop()`.
+
+The right button cycles alert volume through `MUTE`, `10%`, `50%`, and `100%`;
+the selection is shown on-screen. The setting gates alert audio, but this AiPi
+build remains silent until the ES8311 codec and GPIO9 amplifier driver are
+enabled.
 
 This firmware never calls `WiFi.scanNetworks()`, associates with an access
 point, creates an access point, or transmits probe requests. References to
@@ -138,8 +145,9 @@ The main compile-time settings are at the top of `main.cpp`:
 
 | Define | Default | Purpose |
 |---|---:|---|
-| `CHANNEL_MODE` | Full hop | Prioritized legal US channel sweep |
 | `CHANNEL_DWELL_MS` | 700 | Channel dwell time |
+| `LEFT_BUTTON_PIN` | 1 | Runtime scan-mode control |
+| `RIGHT_BUTTON_PIN` | 42 | Runtime alert-volume control |
 | `RSSI_MIN` | -100 | Medium/high-confidence weak-frame cutoff |
 | `RSSI_LOW_CONFIDENCE_MIN` | -95 | Address-only observation cutoff |
 | `ALERT_COOLDOWN_MS` | 5000 | Per-MAC output rate limit |

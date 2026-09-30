@@ -65,6 +65,8 @@ bool detection_view = false;
 uint32_t detection_until = 0;
 uint8_t rendered_channel = 0;
 int rendered_detections = -1;
+bool rendered_all_channels = true;
+uint8_t rendered_volume = 100;
 
 const uint8_t* glyphFor(char character) {
   const char normalized = static_cast<char>(toupper(static_cast<unsigned char>(character)));
@@ -147,22 +149,32 @@ void drawTextCondensed(int x, int y, const char* text, uint16_t foreground,
   }
 }
 
-void renderScan(uint8_t channel, int detections) {
+void renderScan(uint8_t channel, int detections, bool allChannels,
+                uint8_t volumePercent) {
   fillRect(0, 0, kWidth, kHeight, kBlack);
   fillRect(0, 0, kWidth, 22, kRed);
   drawTextCondensed(4, 3, "FLOCK-YOU-GO", kWhite, kRed, 2);
-  drawText(13, 29, "PASSIVE RF WATCH", kGold, kBlack);
-  fillRect(8, 46, 112, 1, kGray);
+  drawText(13, 28, allChannels ? "ALL CHANNELS" : "SCAN 1-6-11",
+           kGold, kBlack);
+  fillRect(8, 42, 112, 1, kGray);
 
   char value[24];
-  snprintf(value, sizeof(value), "SCAN CH %02u", channel);
-  drawText(13, 55, value, kWhite, kBlack, 1);
+  snprintf(value, sizeof(value), "CHANNEL %02u", channel);
+  drawText(13, 50, value, kWhite, kBlack, 1);
   snprintf(value, sizeof(value), "HITS %03d", min(detections, 999));
-  drawText(13, 73, value, detections ? kGold : kWhite, kBlack, 1);
-  drawText(13, 101, "LOCAL  READY", kGreen, kBlack, 1);
+  drawText(13, 67, value, detections ? kGold : kWhite, kBlack, 1);
+  if (volumePercent == 0) {
+    snprintf(value, sizeof(value), "VOLUME MUTE");
+  } else {
+    snprintf(value, sizeof(value), "VOLUME %u%%", volumePercent);
+  }
+  drawText(13, 84, value, volumePercent ? kWhite : kGold, kBlack, 1);
+  drawText(13, 108, "LOCAL READY", kGreen, kBlack, 1);
   flush();
   rendered_channel = channel;
   rendered_detections = detections;
+  rendered_all_channels = allChannels;
+  rendered_volume = volumePercent;
   detection_view = false;
 }
 
@@ -207,14 +219,18 @@ bool aipiDisplayBegin() {
   delay(20);
   ready = true;
   gpio_set_level(kBacklight, 1);
-  renderScan(1, 0);
+  renderScan(11, 0, true, 100);
   return true;
 }
 
-void aipiDisplayShowScan(uint8_t channel, int detections) {
+void aipiDisplayShowScan(uint8_t channel, int detections, bool allChannels,
+                         uint8_t volumePercent) {
   if (!ready || detection_view) return;
-  if (channel == rendered_channel && detections == rendered_detections) return;
-  renderScan(channel, detections);
+  if (channel == rendered_channel && detections == rendered_detections &&
+      allChannels == rendered_all_channels && volumePercent == rendered_volume) {
+    return;
+  }
+  renderScan(channel, detections, allChannels, volumePercent);
 }
 
 void aipiDisplayShowDetection(const char* oui, int8_t rssi, uint8_t channel, uint16_t count) {
@@ -235,11 +251,12 @@ void aipiDisplayShowDetection(const char* oui, int8_t rssi, uint8_t channel, uin
   detection_until = millis() + 3500;
 }
 
-void aipiDisplayTick(uint8_t channel, int detections) {
+void aipiDisplayTick(uint8_t channel, int detections, bool allChannels,
+                     uint8_t volumePercent) {
   if (!ready) return;
   if (detection_view && static_cast<int32_t>(millis() - detection_until) >= 0) {
-    renderScan(channel, detections);
+    renderScan(channel, detections, allChannels, volumePercent);
     return;
   }
-  aipiDisplayShowScan(channel, detections);
+  aipiDisplayShowScan(channel, detections, allChannels, volumePercent);
 }
