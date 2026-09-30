@@ -4,24 +4,23 @@
 #include <ctype.h>
 #include <string.h>
 #include <SPIFFS.h>
+#include "aipi_display.h"
 
 // ============================================================
 // CONFIG
 // ============================================================
 
-#define BUZZER_PIN 3
-#define USE_BUZZER 1
+// AiPi audio uses the ES8311 codec; direct-pin piezo output is unsafe because
+// GPIO3 is the LCD backlight.
+#define USE_BUZZER 0
 
-// Onboard user LED on Seeed XIAO ESP32-S3 is GPIO21 and is ACTIVE LOW
-// (driving the pin LOW lights the LED).
-#define LED_PIN          21
-#define USE_LED          1
+// AiPi status light is a GPIO46 WS2812, not a single active-low GPIO.
+#define USE_LED          0
 #define LED_ACTIVE_HIGH  0
 #define LED_FLASH_MS     120
 
-#define MIRROR_SERIAL    1
-#define MIRROR_TX_PIN    43
-#define MIRROR_BAUD      115200
+// GPIO43 mirroring was part of the earlier dev-board configuration.
+#define MIRROR_SERIAL    0
 
 #define CHANNEL_MODE_FULL_HOP   0
 #define CHANNEL_MODE_CUSTOM     1
@@ -992,6 +991,9 @@ static void drainAlertQueue() {
                  (idx >= 0) ? (int)fyDet[idx].count : 0);
     }
 
+    aipiDisplayShowDetection(oui, e.rssi, e.channel,
+                             (idx >= 0) ? fyDet[idx].count : 0);
+
     // Flask-compatible JSON line (parsed by api/flockyou.py over USB CDC).
     emitDetectionJSON(macStr, method, e.rssi, e.channel,
                       (e.type == ALERT_SSID) ? e.ssid : "");
@@ -1049,18 +1051,18 @@ void setup() {
   Serial.setTxTimeoutMs(0);
   delay(300);
 
+  const bool displayReady = aipiDisplayBegin();
+
 #if MIRROR_SERIAL
-  Serial1.begin(MIRROR_BAUD, SERIAL_8N1, -1, MIRROR_TX_PIN);  // TX-only on GPIO43
+  Serial1.begin(115200, SERIAL_8N1, -1, 43);
 #endif
 
 #if USE_BUZZER
-  pinMode(BUZZER_PIN, OUTPUT);
-  digitalWrite(BUZZER_PIN, LOW);
+  #error "Implement ES8311 audio before enabling USE_BUZZER"
 #endif
 
 #if USE_LED
-  pinMode(LED_PIN, OUTPUT);
-  ledSet(false);
+  #error "Implement the GPIO46 WS2812 driver before enabling USE_LED"
 #endif
 
   startupBeep();
@@ -1103,6 +1105,8 @@ void setup() {
   esp_wifi_set_promiscuous(true);
 
   dualPrintln("[flockyou] merged WiFi detector started");
+  dualPrintf("[flockyou] AIPI display=%s madctl=0x68 offsets=0,0 inversion=off\n",
+             displayReady ? "ready" : "failed");
   dualPrintf("[flockyou] mode=%s dwell_ms=%u start_channel=%u rssi_min=%d spiffs=%d\n",
                 channelModeName(), CHANNEL_DWELL_MS, currentChannel,
                 RSSI_MIN, fySpiffsReady ? 1 : 0);
@@ -1117,6 +1121,7 @@ void loop() {
   autosaveTick();      // periodic SPIFFS write if dirty
   heartbeatTick();     // audible beep-pair while a target is still in range
   ledTick();           // turn off LED after LED_FLASH_MS
+  aipiDisplayTick(currentChannel, fyDetCount);
   printHeartbeat();
   delay(1);
 }
