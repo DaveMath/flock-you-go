@@ -138,10 +138,19 @@ void drawText(int x, int y, const char* text, uint16_t foreground, uint16_t back
   }
 }
 
+void drawTextCondensed(int x, int y, const char* text, uint16_t foreground,
+                       uint16_t background, uint8_t scale) {
+  const int advance = 5 * scale;
+  while (*text && x + advance <= kWidth) {
+    drawChar(x, y, *text++, foreground, background, scale);
+    x += advance;
+  }
+}
+
 void renderScan(uint8_t channel, int detections) {
   fillRect(0, 0, kWidth, kHeight, kBlack);
   fillRect(0, 0, kWidth, 22, kRed);
-  drawText(10, 3, "FLOCK-YOU", kWhite, kRed, 2);
+  drawTextCondensed(4, 3, "FLOCK-YOU-GO", kWhite, kRed, 2);
   drawText(13, 29, "PASSIVE RF WATCH", kGold, kBlack);
   fillRect(8, 46, 112, 1, kGray);
 
