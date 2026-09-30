@@ -1,8 +1,8 @@
 # AIPI Lite Display Integration
 
-This document records the hardware-specific display configuration used by
-Flock-You Go. It is intentionally narrow: the canonical project overview,
-build instructions, and runtime behavior live in [`README.md`](README.md).
+This document records the hardware-specific display and passive Wi-Fi receiver
+configuration used by Flock-You Go. The canonical project overview and build
+instructions live in [`README.md`](README.md).
 
 ## Validated panel configuration
 
@@ -70,6 +70,68 @@ The Wi-Fi receive callback never touches the display. `drainAlertQueue()` calls
 bounded callback behavior. `aipiDisplayTick()` restores the scan view after
 3.5 seconds and skips redraws when channel and count are unchanged.
 
+Low-confidence address observations remain available in the USB JSON and
+SPIFFS session record, but do not replace the scan view. Only medium- and
+high-confidence observations produce a local alert screen.
+
+## Passive Wi-Fi receiver
+
+The ESP32-S3 radio runs only as a promiscuous receiver. It does not associate
+with a network, create an access point, initiate an active network scan, or
+transmit probe requests. The firmware contains no calls to
+`WiFi.scanNetworks()`, `esp_wifi_scan_start()`, `esp_wifi_connect()`,
+`WiFi.begin()`, `WiFi.softAP()`, or `esp_wifi_80211_tx()`.
+
+Probe-request references in the detector are receive-side parsing. The AiPi
+observes probe requests transmitted by other radios and uses their information
+elements as evidence; it never generates those frames itself.
+
+The default US channel plan is:
+
+```text
+11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7
+```
+
+The dwell time is 700 ms, giving a complete 1-11 sweep in approximately 7.7
+seconds. Channels 12 and 13 are excluded from the default plan. A compile-time
+fast mode retains the `1, 6, 11` sequence for environments where cycle time is
+more important than complete channel coverage.
+
+## Confidence model
+
+Observations are classified before local alerting:
+
+| Confidence | Evidence | Device behavior |
+|---|---|---|
+| High | Known transmitter OUI plus received wildcard probe signature | Display and alert |
+| Medium | Known transmitter OUI in a management frame, or configured SSID | Display and alert |
+| Low | Receiver/BSSID address match or known OUI in a data frame | Log and persist only |
+
+The general receive floor is `-100 dBm`. Low-confidence address-only evidence
+uses the stricter `-95 dBm` floor. If later traffic promotes an existing MAC
+from low confidence to medium or high confidence, its stored method and
+confidence are upgraded and the local alert path is activated.
+
+## Receiver health and initialization
+
+The receive queue contains 64 entries. The 30-second serial heartbeat reports:
+
+- all received management and data frame counts
+- received frames on the current channel
+- queue drops
+- channel-switch failures
+- current channel, mode, and observation count
+
+Every ESP-IDF Wi-Fi initialization, channel, filter, callback, and promiscuous
+mode transition is checked. Wi-Fi NVS and CSI are disabled, receive buffers are
+bounded, and AMPDU/AMSDU aggregation is disabled for the passive detector. A
+startup failure leaves the scanner stopped and prints the ESP-IDF error instead
+of presenting a false scanning state.
+
+USB detection JSON and CRC-protected SPIFFS session records include the
+`confidence` field alongside the detection method, MAC, OUI, RSSI, channel,
+frequency, and optional SSID.
+
 ## Hardware conflicts removed
 
 The inherited firmware used GPIO3 as a piezo buzzer and GPIO21 as an active-low
@@ -90,8 +152,23 @@ After flashing:
 1. The image fills all 128 x 128 pixels without static edge strips.
 2. The header is red, status text is white/gold/green, and colors are not
    exchanged.
-3. The scan channel changes among 1, 6, and 11.
-4. A test detection replaces the scan page and returns after 3.5 seconds.
-5. Detection rendering does not stall channel hopping or USB JSON output.
+3. The scan channel follows the prioritized 1-11 sequence at 700 ms dwell.
+4. Serial health output shows increasing receive counters with zero queue drops
+   and channel-switch failures under normal operation.
+5. A medium/high test observation replaces the scan page and returns after 3.5
+   seconds; a low-confidence observation is logged without replacing the page.
+6. Detection rendering does not stall channel hopping or USB JSON output.
+
+## Verified build
+
+PlatformIO environment `aipi_lite` builds successfully for `ESP32-S3` using
+the `seeed_xiao_esp32s3` toolchain definition and the repository's 16 MB flash
+override. The passive-scanner revision produced:
+
+```text
+RAM:   95,292 / 327,680 bytes (29.1%)
+Flash: 694,385 / 6,291,456 bytes (11.0%)
+Image: ESP32-S3 firmware.bin
+```
 
 Validated display research and AiPi integration by **@GGDM**.

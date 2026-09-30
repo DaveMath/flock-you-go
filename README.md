@@ -69,16 +69,35 @@ logging state. A detection temporarily replaces it with:
 
 ## Detection behavior
 
-The radio remains in ESP32 promiscuous mode and hops channels 1, 6, and 11 by
-default. The receive callback performs only bounded matching and queues events;
+The radio remains in ESP32 promiscuous mode and passively sweeps US channels
+1-11 in this priority order: `11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7`. The default
+dwell is 700 ms. A faster 1/6/11 mode remains available as a compile-time
+option. The receive callback performs only bounded matching and queues events;
 display rendering, USB output, alerts, and SPIFFS writes happen from `loop()`.
 
-Each accepted detection is:
+This firmware never calls `WiFi.scanNetworks()`, associates with an access
+point, creates an access point, or transmits probe requests. References to
+probe requests in the detector describe frames received passively from other
+devices. The scanner does not generate those frames.
+
+Observations are ranked before alerting:
+
+- **High:** known-OUI wildcard probe signature observed on the air
+- **Medium:** known transmitter OUI in a management frame, or configured SSID
+- **Low:** address-only receiver/BSSID or data-frame OUI match
+
+Low-confidence observations are logged and persisted for analysis, but do not
+take over the screen or trigger physical alerts. Medium and high confidence
+events do. Serial health output includes management/data frame totals,
+per-channel traffic, queue drops, and channel-switch failures.
+
+Each accepted observation is:
 
 - added to the in-memory table
 - persisted to SPIFFS using a CRC-protected temporary file and atomic promote
-- displayed locally
 - emitted as newline-delimited JSON over USB CDC
+
+Medium- and high-confidence observations are also displayed locally.
 
 The firmware does not join a Wi-Fi network, create an access point, interfere
 with traffic, or upload detection data.
@@ -119,9 +138,10 @@ The main compile-time settings are at the top of `main.cpp`:
 
 | Define | Default | Purpose |
 |---|---:|---|
-| `CHANNEL_MODE` | Custom | Channel strategy |
-| `CHANNEL_DWELL_MS` | 350 | Channel dwell time |
-| `RSSI_MIN` | -95 | Weak-frame cutoff |
+| `CHANNEL_MODE` | Full hop | Prioritized legal US channel sweep |
+| `CHANNEL_DWELL_MS` | 700 | Channel dwell time |
+| `RSSI_MIN` | -100 | Medium/high-confidence weak-frame cutoff |
+| `RSSI_LOW_CONFIDENCE_MIN` | -95 | Address-only observation cutoff |
 | `ALERT_COOLDOWN_MS` | 5000 | Per-MAC output rate limit |
 | `CHECK_ADDR1` | 1 | Receiver-side matching |
 | `CHECK_ADDR3` | 0 | Optional BSSID matching |

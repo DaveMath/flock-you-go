@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include <WiFi.h>
 #include "esp_wifi.h"
+#include "esp_err.h"
 #include <ctype.h>
 #include <string.h>
 #include <SPIFFS.h>
@@ -26,18 +26,21 @@
 #define CHANNEL_MODE_CUSTOM     1
 #define CHANNEL_MODE_SINGLE     2
 
-#define CHANNEL_MODE CHANNEL_MODE_CUSTOM
-#define CHANNEL_DWELL_MS 350
+#define CHANNEL_MODE CHANNEL_MODE_FULL_HOP
+#define CHANNEL_DWELL_MS 700
 #define SINGLE_CHANNEL 1
 
 static const uint8_t customChannels[]  = {1, 6, 11};
 static const size_t  customChannelCount = sizeof(customChannels) / sizeof(customChannels[0]);
 
-static const uint8_t fullHopChannels[] = {1,2,3,4,5,6,7,8,9,10,11};
+// Prioritize the three non-overlapping US channels, then fill in the gaps.
+// Channels 12/13 are deliberately excluded from the default regulatory plan.
+static const uint8_t fullHopChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 static const size_t  fullHopChannelCount = sizeof(fullHopChannels) / sizeof(fullHopChannels[0]);
 
 #define HEARTBEAT_MS    30000
-#define RSSI_MIN        -95
+#define RSSI_MIN        -100
+#define RSSI_LOW_CONFIDENCE_MIN -95
 #define ALERT_COOLDOWN_MS 5000
 
 // Audio cadence: two fast ascending beeps on a NEW MAC, then while any
@@ -103,7 +106,13 @@ static uint8_t oui_bytes[OUI_COUNT][3];
 // ALERT QUEUE  (callback → loop, avoids Serial in WiFi task)
 // ============================================================
 
-#define ALERT_QUEUE_SIZE 32
+#define ALERT_QUEUE_SIZE 64
+
+typedef enum : uint8_t {
+  CONFIDENCE_LOW    = 0,
+  CONFIDENCE_MEDIUM = 1,
+  CONFIDENCE_HIGH   = 2,
+} DetectionConfidence;
 
 typedef enum : uint8_t {
   ALERT_OUI_ADDR2       = 0,
@@ -121,6 +130,7 @@ typedef struct {
   uint8_t   mac[6];
   int8_t    rssi;
   uint8_t   channel;
+  DetectionConfidence confidence;
   char      ssid[33];     // populated for SSID hits
   char      frameKind[12];
 } AlertEntry;
@@ -130,11 +140,18 @@ static volatile size_t alertHead = 0;  // written by callback
 static volatile size_t alertTail = 0;  // read by loop()
 static portMUX_TYPE    queueMux  = portMUX_INITIALIZER_UNLOCKED;
 
-static void IRAM_ATTR enqueueAlert(AlertType type, const uint8_t* mac, int8_t rssi,
-                                    uint8_t ch, const char* ssid, const char* kind) {
+static volatile uint32_t queueDrops = 0;
+
+static void IRAM_ATTR enqueueAlert(AlertType type, DetectionConfidence confidence,
+                                    const uint8_t* mac, int8_t rssi, uint8_t ch,
+                                    const char* ssid, const char* kind) {
+  if (rssi < RSSI_MIN) return;
+  if (confidence == CONFIDENCE_LOW && rssi < RSSI_LOW_CONFIDENCE_MIN) return;
+
   portENTER_CRITICAL_ISR(&queueMux);
   size_t next = (alertHead + 1) % ALERT_QUEUE_SIZE;
   if (next == alertTail) {                         // drop if full — loop() is behind
+    queueDrops++;
     portEXIT_CRITICAL_ISR(&queueMux);
     return;
   }
@@ -143,6 +160,7 @@ static void IRAM_ATTR enqueueAlert(AlertType type, const uint8_t* mac, int8_t rs
   e->type    = type;
   e->rssi    = rssi;
   e->channel = ch;
+  e->confidence = confidence;
   memcpy((void*)e->mac, mac, 6);
 
   if (ssid)  { strncpy((char*)e->ssid,      ssid, 32); ((char*)e->ssid)[32] = '\0'; }
@@ -166,6 +184,7 @@ static void IRAM_ATTR enqueueAlert(AlertType type, const uint8_t* mac, int8_t rs
 typedef struct {
   char     mac[18];
   char     method[16];     // "oui_addr2" / "oui_addr1" / "oui_addr3" / "ssid"
+  DetectionConfidence confidence;
   int8_t   rssi;
   uint8_t  channel;
   uint32_t firstSeen;      // millis() at first hit
@@ -191,6 +210,12 @@ static size_t   fullHopIndex = 0;
 static unsigned long lastHop = 0;
 static unsigned long lastHeartbeat = 0;
 static volatile bool sniffingStopped = false;
+
+static volatile uint32_t rxFrames = 0;
+static volatile uint32_t rxMgmtFrames = 0;
+static volatile uint32_t rxDataFrames = 0;
+static volatile uint32_t rxByChannel[14] = {0};
+static uint32_t channelSwitchFailures = 0;
 
 // Dedupe table (small circular, avoids single-slot eviction bug).
 // This is the *serial-rate-limit* dedup — it suppresses beep + emit within
@@ -378,6 +403,28 @@ static const char* channelModeName() {
   }
 }
 
+static const char* confidenceName(DetectionConfidence confidence) {
+  switch (confidence) {
+    case CONFIDENCE_HIGH:   return "high";
+    case CONFIDENCE_MEDIUM: return "medium";
+    default:                return "low";
+  }
+}
+
+static bool wifiOk(esp_err_t err, const char* operation) {
+  if (err == ESP_OK) return true;
+  dualPrintf("[flockyou] WiFi error: %s failed: %s (0x%x)\n",
+             operation, esp_err_to_name(err), (unsigned)err);
+  return false;
+}
+
+static bool setScanChannel(uint8_t channel) {
+  esp_err_t err = esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+  if (err == ESP_OK) return true;
+  channelSwitchFailures++;
+  return wifiOk(err, "set_channel");
+}
+
 static inline uint16_t channelFreqMhz(uint8_t ch) {
   return (ch >= 1 && ch <= 14) ? (uint16_t)(2407 + 5 * ch) : 0;
 }
@@ -401,7 +448,7 @@ static bool shouldSuppressDuplicate(const char* macStr) {
 static void stopSniffing(const char* reason) {
   if (sniffingStopped) return;
   sniffingStopped = true;
-  esp_wifi_set_promiscuous(false);
+  wifiOk(esp_wifi_set_promiscuous(false), "disable_promiscuous");
   dualPrintf("[flockyou] sniffing stopped: %s\n", reason);
 }
 
@@ -413,7 +460,7 @@ static void applyInitialChannel() {
 #else
   currentChannel = fullHopChannels[0];
 #endif
-  esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
+  setScanChannel(currentChannel);
   lastHop = millis();  // start dwell timer precisely when channel is first set
 }
 
@@ -422,7 +469,7 @@ static void updateChannelMode() {
 #if CHANNEL_MODE == CHANNEL_MODE_SINGLE
   if (currentChannel != SINGLE_CHANNEL) {
     currentChannel = SINGLE_CHANNEL;
-    esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
+    setScanChannel(currentChannel);
   }
   return;
 #else
@@ -434,15 +481,19 @@ static void updateChannelMode() {
     fullHopIndex = (fullHopIndex + 1) % fullHopChannelCount;
     currentChannel = fullHopChannels[fullHopIndex];
   #endif
-  esp_wifi_set_channel(currentChannel, WIFI_SECOND_CHAN_NONE);
+  setScanChannel(currentChannel);
   lastHop = millis();
 #endif
 }
 
 static void printHeartbeat() {
   if (millis() - lastHeartbeat >= HEARTBEAT_MS) {
-    dualPrintf("[flockyou] scanning (ch=%u mode=%s det=%d)\n",
-                  currentChannel, channelModeName(), fyDetCount);
+    uint32_t channelFrames = currentChannel <= 13 ? rxByChannel[currentChannel] : 0;
+    dualPrintf("[flockyou] passive scan ch=%u mode=%s obs=%d rx=%lu mgmt=%lu data=%lu ch_rx=%lu drops=%lu hop_err=%lu\n",
+               currentChannel, channelModeName(), fyDetCount,
+               (unsigned long)rxFrames, (unsigned long)rxMgmtFrames,
+               (unsigned long)rxDataFrames, (unsigned long)channelFrames,
+               (unsigned long)queueDrops, (unsigned long)channelSwitchFailures);
     lastHeartbeat = millis();
   }
 }
@@ -468,21 +519,30 @@ static const char* alertTypeToMethod(AlertType t) {
 // brand new to this session, or (b) MAC is known but hasn't been seen in
 // REDISCOVER_MS — i.e. it left RF range and came back.
 static int fyAddDetection(const char* mac, const char* method,
-                          int8_t rssi, uint8_t ch, const char* ssid,
+                          DetectionConfidence confidence, int8_t rssi,
+                          uint8_t ch, const char* ssid,
                           bool* outChirpWorthy) {
   uint32_t now = millis();
   for (int i = 0; i < fyDetCount; i++) {
     if (strcasecmp(fyDet[i].mac, mac) == 0) {
       bool rediscover = (now - fyDet[i].lastSeen) > REDISCOVER_MS;
+      bool promoted = confidence > fyDet[i].confidence;
       if (fyDet[i].count < 0xFFFF) fyDet[i].count++;
       fyDet[i].lastSeen = now;
       fyDet[i].rssi     = rssi;
       fyDet[i].channel  = ch;
+      if (promoted) {
+        fyDet[i].confidence = confidence;
+        strlcpy(fyDet[i].method, method ? method : "", sizeof(fyDet[i].method));
+      }
       if (ssid && ssid[0] && !fyDet[i].ssid[0]) {
         strlcpy(fyDet[i].ssid, ssid, sizeof(fyDet[i].ssid));
       }
       fyDirty = true;
-      if (outChirpWorthy) *outChirpWorthy = rediscover;
+      if (outChirpWorthy) {
+        *outChirpWorthy = rediscover ||
+                          (promoted && confidence >= CONFIDENCE_MEDIUM);
+      }
       return i;
     }
   }
@@ -493,6 +553,7 @@ static int fyAddDetection(const char* mac, const char* method,
   FYDetection& d = fyDet[fyDetCount];
   strlcpy(d.mac,    mac,                       sizeof(d.mac));
   strlcpy(d.method, method ? method : "",      sizeof(d.method));
+  d.confidence = confidence;
   d.rssi      = rssi;
   d.channel   = ch;
   d.firstSeen = now;
@@ -568,9 +629,9 @@ static size_t fySerializeDet(const FYDetection& d, char* dst, size_t cap) {
   char ssidEsc[sizeof(d.ssid) * 6 + 1];
   jsonEscape(ssidEsc, sizeof(ssidEsc), d.ssid);
   int n = snprintf(dst, cap,
-      "{\"mac\":\"%s\",\"method\":\"%s\",\"rssi\":%d,\"channel\":%u,"
+      "{\"mac\":\"%s\",\"method\":\"%s\",\"confidence\":\"%s\",\"rssi\":%d,\"channel\":%u,"
       "\"first\":%lu,\"last\":%lu,\"count\":%u,\"ssid\":\"%s\"}",
-      d.mac, d.method, d.rssi, (unsigned)d.channel,
+      d.mac, d.method, confidenceName(d.confidence), d.rssi, (unsigned)d.channel,
       (unsigned long)d.firstSeen, (unsigned long)d.lastSeen, (unsigned)d.count,
       ssidEsc);
   return (n > 0 && (size_t)n < cap) ? (size_t)n : 0;
@@ -760,6 +821,7 @@ static void fyPromotePrevSession() {
 // we don't embed GPS here because there's no on-device AP / phone link.
 
 static void emitDetectionJSON(const char* mac, const char* method,
+                              DetectionConfidence confidence,
                               int8_t rssi, uint8_t ch, const char* ssid) {
   char ssidEsc[sizeof(((FYDetection*)0)->ssid) * 6 + 1];
   jsonEscape(ssidEsc, sizeof(ssidEsc), ssid ? ssid : "");
@@ -772,6 +834,7 @@ static void emitDetectionJSON(const char* mac, const char* method,
   dualPrintf(
       "{\"event\":\"detection\","
       "\"detection_method\":\"wifi_%s\","
+      "\"confidence\":\"%s\","
       "\"protocol\":\"wifi_2_4ghz\","
       "\"mac_address\":\"%s\","
       "\"oui\":\"%s\","
@@ -780,7 +843,7 @@ static void emitDetectionJSON(const char* mac, const char* method,
       "\"channel\":%u,"
       "\"frequency\":%u,"
       "\"ssid\":\"%s\"}\n",
-      method, mac, oui, rssi,
+      method, confidenceName(confidence), mac, oui, rssi,
       (unsigned)ch, (unsigned)channelFreqMhz(ch), ssidEsc);
 }
 
@@ -840,10 +903,13 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
   if (pkt->rx_ctrl.sig_len < sizeof(wifi_ieee80211_mac_hdr_t)) return;
   wifi_ieee80211_mac_hdr_t*    hdr = (wifi_ieee80211_mac_hdr_t*)pkt->payload;
   int8_t rssi = pkt->rx_ctrl.rssi;
+  uint8_t ch = (uint8_t)pkt->rx_ctrl.channel;  // actual rx channel from driver
+  rxFrames++;
+  if (type == WIFI_PKT_MGMT) rxMgmtFrames++;
+  if (type == WIFI_PKT_DATA) rxDataFrames++;
+  if (ch <= 13) rxByChannel[ch]++;
 
   if (rssi < RSSI_MIN) return;
-
-  uint8_t ch = (uint8_t)pkt->rx_ctrl.channel;  // actual rx channel from driver
 
   // --- OUI check: addr2 (transmitter/source) ---
   //
@@ -870,14 +936,19 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
         // not retry — it would mis-classify.
         if (r == -1 && bodyLen > 4) r = isWildcardProbeIE(body, bodyLen - 4);
         if (r == 1) {
-          enqueueAlert(ALERT_WILDCARD_PROBE, hdr->addr2, rssi, ch,
+          enqueueAlert(ALERT_WILDCARD_PROBE, CONFIDENCE_HIGH,
+                       hdr->addr2, rssi, ch,
                        nullptr, "probe_req");
           emitted = true;
         }
       }
     }
     if (!emitted) {
-      enqueueAlert(ALERT_OUI_ADDR2, hdr->addr2, rssi, ch, nullptr, "addr2");
+      DetectionConfidence confidence =
+          (type == WIFI_PKT_MGMT) ? CONFIDENCE_MEDIUM : CONFIDENCE_LOW;
+      enqueueAlert(ALERT_OUI_ADDR2, confidence,
+                   hdr->addr2, rssi, ch, nullptr,
+                   (type == WIFI_PKT_MGMT) ? "mgmt_addr2" : "data_addr2");
     }
   }
 
@@ -887,7 +958,8 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
   // window due to their burst-sleep duty cycle. Multicast guard is mandatory
   // here since addr1 is broadcast (ff:ff:ff:ff:ff:ff) in beacons/broadcasts.
   if (!isMulticast(hdr->addr1) && matchOuiRaw(hdr->addr1)) {
-    enqueueAlert(ALERT_OUI_ADDR1, hdr->addr1, rssi, ch, nullptr, "addr1");
+    enqueueAlert(ALERT_OUI_ADDR1, CONFIDENCE_LOW,
+                 hdr->addr1, rssi, ch, nullptr, "addr1");
   }
 #endif
 
@@ -895,7 +967,8 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
   // addr3 fallback: catches cases where addr2 is randomised but addr3
   // carries the real BSSID OUI (management frames only).
   if (type == WIFI_PKT_MGMT && matchOuiRaw(hdr->addr3)) {
-    enqueueAlert(ALERT_OUI_ADDR3, hdr->addr3, rssi, ch, nullptr, "addr3");
+    enqueueAlert(ALERT_OUI_ADDR3, CONFIDENCE_LOW,
+                 hdr->addr3, rssi, ch, nullptr, "addr3");
   }
 #endif
 
@@ -935,7 +1008,8 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
         char ssid[33] = {0};
         if (extractSsidFromMgmtBody(mgmtBody, mgmtBodyLen, ssid, sizeof(ssid))) {
           if (matchSsidKeyword(ssid)) {
-            enqueueAlert(ALERT_SSID, hdr->addr2, rssi, ch, ssid, frameKind);
+            enqueueAlert(ALERT_SSID, CONFIDENCE_MEDIUM,
+                         hdr->addr2, rssi, ch, ssid, frameKind);
           }
         }
       }
@@ -965,14 +1039,13 @@ static void drainAlertQueue() {
     // chirpWorthy = true for brand-new MACs AND for MACs rediscovered after
     // REDISCOVER_MS of silence (drove away and came back).
     bool chirpWorthy = false;
-    int idx = fyAddDetection(macStr, method, e.rssi, e.channel,
+    int idx = fyAddDetection(macStr, method, e.confidence, e.rssi, e.channel,
                              (e.type == ALERT_SSID) ? e.ssid : nullptr,
                              &chirpWorthy);
 
-    // Refresh the global "still around" timer for the heartbeat tick.
-    // Done unconditionally so a device counts as active even when serial is
-    // rate-limited (still audible via heartbeat, just quieter on the wire).
-    fyLastTargetSeen = millis();
+    // Only corroborated observations drive the physical-alert heartbeat.
+    // Update before serial dedupe so repeated medium/high frames keep it alive.
+    if (e.confidence >= CONFIDENCE_MEDIUM) fyLastTargetSeen = millis();
 
     // Serial-rate-limit: suppress emit/beep/flash within ALERT_COOLDOWN_MS.
     if (shouldSuppressDuplicate(macStr)) continue;
@@ -981,34 +1054,38 @@ static void drainAlertQueue() {
     char oui[9];
     ouiFromMac(e.mac, oui, sizeof(oui));
     if (e.type == ALERT_SSID) {
-      dualPrintf("[flockyou] DETECT-SSID type=%s mac=%s ssid=\"%s\" rssi=%d ch=%u count=%d\n",
-                 e.frameKind, macStr, e.ssid, e.rssi, e.channel,
+      dualPrintf("[flockyou] DETECT-SSID confidence=%s type=%s mac=%s ssid=\"%s\" rssi=%d ch=%u count=%d\n",
+                 confidenceName(e.confidence), e.frameKind, macStr, e.ssid,
+                 e.rssi, e.channel,
                  (idx >= 0) ? (int)fyDet[idx].count : 0);
     } else {
-      dualPrintf("[flockyou] DETECT-OUI mac=%s oui=%s rssi=%d ch=%u addr=%s count=%d\n",
-                 macStr, oui, e.rssi, e.channel,
+      dualPrintf("[flockyou] %s-OUI confidence=%s mac=%s oui=%s rssi=%d ch=%u addr=%s count=%d\n",
+                 e.confidence == CONFIDENCE_LOW ? "OBSERVE" : "DETECT",
+                 confidenceName(e.confidence), macStr, oui, e.rssi, e.channel,
                  e.frameKind[0] ? e.frameKind : "addr2",
                  (idx >= 0) ? (int)fyDet[idx].count : 0);
     }
 
-    aipiDisplayShowDetection(oui, e.rssi, e.channel,
-                             (idx >= 0) ? fyDet[idx].count : 0);
+    if (e.confidence >= CONFIDENCE_MEDIUM) {
+      aipiDisplayShowDetection(oui, e.rssi, e.channel,
+                               (idx >= 0) ? fyDet[idx].count : 0);
+    }
 
     // Flask-compatible JSON line (parsed by api/flockyou.py over USB CDC).
-    emitDetectionJSON(macStr, method, e.rssi, e.channel,
+    emitDetectionJSON(macStr, method, e.confidence, e.rssi, e.channel,
                       (e.type == ALERT_SSID) ? e.ssid : "");
 
     // Audio feedback:
     //   - NEW MAC  → two fast ascending beeps (clearly distinct sound)
     //   - REPEAT   → silent; the heartbeat tick covers continued presence
     // LED flashes on every emitted detection either way.
-    if (chirpWorthy) {
+    if (chirpWorthy && e.confidence >= CONFIDENCE_MEDIUM) {
       newDetectChirp();
       // Reset the heartbeat phase so the first follow-up beep lands
       // HB_BEEP_INTERVAL_MS after the initial chirp, not mid-window.
       fyLastHeartbeatAt = millis();
     }
-    ledFlash(LED_FLASH_MS);
+    if (e.confidence >= CONFIDENCE_MEDIUM) ledFlash(LED_FLASH_MS);
 
 #if STOP_ON_OUI_HIT
     if (e.type != ALERT_SSID) stopSniffing("OUI hit");
@@ -1082,12 +1159,24 @@ void setup() {
     dualPrintln("[flockyou] SPIFFS init FAILED — running without persistence");
   }
 
-  WiFi.mode(WIFI_MODE_NULL);
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-  esp_wifi_init(&cfg);
-  esp_wifi_set_storage(WIFI_STORAGE_RAM);
-  esp_wifi_set_mode(WIFI_MODE_NULL);
-  esp_wifi_start();
+  cfg.static_rx_buf_num  = 6;
+  cfg.dynamic_rx_buf_num = 6;
+  cfg.csi_enable         = false;
+  cfg.ampdu_rx_enable    = false;
+  cfg.ampdu_tx_enable    = false;
+  cfg.amsdu_tx_enable    = false;
+  cfg.nvs_enable         = false;
+  cfg.rx_ba_win          = 6;
+
+  if (!wifiOk(esp_wifi_init(&cfg), "init") ||
+      !wifiOk(esp_wifi_set_storage(WIFI_STORAGE_RAM), "set_storage") ||
+      !wifiOk(esp_wifi_set_mode(WIFI_MODE_NULL), "set_mode_null") ||
+      !wifiOk(esp_wifi_start(), "start")) {
+    dualPrintln("[flockyou] WiFi startup failed; passive scanner disabled");
+    sniffingStopped = true;
+    return;
+  }
 
   applyInitialChannel();
 
@@ -1100,16 +1189,20 @@ void setup() {
         | WIFI_PROMIS_FILTER_MASK_DATA
 #endif
   };
-  esp_wifi_set_promiscuous_filter(&filt);
-  esp_wifi_set_promiscuous_rx_cb(&wifiSniffer);
-  esp_wifi_set_promiscuous(true);
+  if (!wifiOk(esp_wifi_set_promiscuous_filter(&filt), "set_promiscuous_filter") ||
+      !wifiOk(esp_wifi_set_promiscuous_rx_cb(&wifiSniffer), "set_promiscuous_callback") ||
+      !wifiOk(esp_wifi_set_promiscuous(true), "enable_promiscuous")) {
+    dualPrintln("[flockyou] promiscuous receive setup failed; scanner disabled");
+    sniffingStopped = true;
+    return;
+  }
 
-  dualPrintln("[flockyou] merged WiFi detector started");
+  dualPrintln("[flockyou] passive-only WiFi detector started (no association, active scan, or probe transmission)");
   dualPrintf("[flockyou] AIPI display=%s madctl=0x68 offsets=0,0 inversion=off\n",
              displayReady ? "ready" : "failed");
-  dualPrintf("[flockyou] mode=%s dwell_ms=%u start_channel=%u rssi_min=%d spiffs=%d\n",
+  dualPrintf("[flockyou] mode=%s dwell_ms=%u start_channel=%u rssi_min=%d low_conf_rssi_min=%d spiffs=%d\n",
                 channelModeName(), CHANNEL_DWELL_MS, currentChannel,
-                RSSI_MIN, fySpiffsReady ? 1 : 0);
+                RSSI_MIN, RSSI_LOW_CONFIDENCE_MIN, fySpiffsReady ? 1 : 0);
 
   lastHeartbeat = millis();
   fyLastSaveAt  = millis();
