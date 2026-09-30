@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "esp_wifi.h"
 #include "esp_err.h"
+#include "driver/gpio.h"
 #include <ctype.h>
 #include <string.h>
 #include <SPIFFS.h>
@@ -34,9 +35,9 @@ typedef enum : uint8_t {
 static const uint8_t fastScanChannels[] = {1, 6, 11};
 static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 
-#define LEFT_BUTTON_PIN  1
-#define RIGHT_BUTTON_PIN 42
-#define BUTTON_DEBOUNCE_MS 35
+#define LEFT_BUTTON_PIN  GPIO_NUM_1
+#define RIGHT_BUTTON_PIN GPIO_NUM_42
+#define BUTTON_DEBOUNCE_MS 100
 
 #define HEARTBEAT_MS    30000
 #define RSSI_MIN        -100
@@ -221,7 +222,7 @@ static volatile uint32_t rxByChannel[14] = {0};
 static uint32_t channelSwitchFailures = 0;
 
 typedef struct {
-  uint8_t pin;
+  gpio_num_t pin;
   bool rawPressed;
   bool stablePressed;
   uint32_t changedAt;
@@ -453,15 +454,36 @@ static void selectFirstChannel() {
   lastHop = millis();
 }
 
-static void initButton(ButtonState* button) {
-  pinMode(button->pin, INPUT_PULLUP);
-  button->rawPressed = digitalRead(button->pin) == LOW;
-  button->stablePressed = button->rawPressed;
-  button->changedAt = millis();
+static bool buttonIsPressed(const ButtonState* button) {
+  return gpio_get_level(button->pin) == 0;
+}
+
+static void initButtons() {
+  gpio_config_t config = {};
+  config.pin_bit_mask = (1ULL << LEFT_BUTTON_PIN) | (1ULL << RIGHT_BUTTON_PIN);
+  config.mode = GPIO_MODE_INPUT;
+  config.pull_up_en = GPIO_PULLUP_ENABLE;
+  config.pull_down_en = GPIO_PULLDOWN_DISABLE;
+  config.intr_type = GPIO_INTR_DISABLE;
+  esp_err_t err = gpio_config(&config);
+  if (err != ESP_OK) {
+    dualPrintf("[flockyou] button GPIO setup failed: %s (0x%x)\n",
+               esp_err_to_name(err), (unsigned)err);
+    return;
+  }
+
+  leftButton.rawPressed = buttonIsPressed(&leftButton);
+  leftButton.stablePressed = leftButton.rawPressed;
+  leftButton.changedAt = millis();
+  rightButton.rawPressed = buttonIsPressed(&rightButton);
+  rightButton.stablePressed = rightButton.rawPressed;
+  rightButton.changedAt = millis();
+  dualPrintf("[flockyou] buttons ready left_gpio=1 level=%d right_gpio=42 level=%d\n",
+             gpio_get_level(LEFT_BUTTON_PIN), gpio_get_level(RIGHT_BUTTON_PIN));
 }
 
 static bool pressedEdge(ButtonState* button) {
-  bool pressed = digitalRead(button->pin) == LOW;
+  bool pressed = buttonIsPressed(button);
   uint32_t now = millis();
   if (pressed != button->rawPressed) {
     button->rawPressed = pressed;
@@ -476,11 +498,13 @@ static bool pressedEdge(ButtonState* button) {
 }
 
 static void handleButtons() {
+  bool displayChanged = false;
   if (pressedEdge(&leftButton)) {
     scanMode = scanMode == SCAN_ALL_CHANNELS ? SCAN_1_6_11 : SCAN_ALL_CHANNELS;
     selectFirstChannel();
     dualPrintf("[flockyou] scan mode=%s start_channel=%u\n",
                channelModeName(), currentChannel);
+    displayChanged = true;
   }
 
   if (pressedEdge(&rightButton)) {
@@ -492,6 +516,12 @@ static void handleButtons() {
     } else {
       dualPrintf("[flockyou] alert volume=%u%%\n", outputVolumePercent);
     }
+    displayChanged = true;
+  }
+
+  if (displayChanged) {
+    aipiDisplayShowScan(currentChannel, fyDetCount,
+                        scanMode == SCAN_ALL_CHANNELS, outputVolumePercent);
   }
 }
 
@@ -1180,8 +1210,7 @@ void setup() {
   delay(300);
 
   const bool displayReady = aipiDisplayBegin();
-  initButton(&leftButton);
-  initButton(&rightButton);
+  initButtons();
 
 #if MIRROR_SERIAL
   Serial1.begin(115200, SERIAL_8N1, -1, 43);

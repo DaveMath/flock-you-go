@@ -82,6 +82,11 @@ the selection is shown on-screen. The setting gates alert audio, but this AiPi
 build remains silent until the ES8311 codec and GPIO9 amplifier driver are
 enabled.
 
+Both buttons are active-low and read by raw ESP-IDF GPIO number with 100 ms
+debounce. Every accepted press forces an immediate scan-screen redraw. The boot
+log prints the initial GPIO1/GPIO42 levels; an idle button should read `1` and a
+pressed button should read `0`.
+
 This firmware never calls `WiFi.scanNetworks()`, associates with an access
 point, creates an access point, or transmits probe requests. References to
 probe requests in the detector describe frames received passively from other

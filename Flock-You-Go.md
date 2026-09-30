@@ -103,9 +103,18 @@ the new plan and restarts the dwell timer.
 The scan screen writes the selected mode as `ALL CHANNELS` or `SCAN 1-6-11`
 above the live channel number. The right button on GPIO42 cycles the alert
 volume through `MUTE`, `10%`, `50%`, and `100%`, also shown on-screen. Both
-buttons are active-low, use internal pull-ups, and have 35 ms software debounce.
-The volume state gates alert audio, although actual sound remains disabled until
-the ES8311 codec and GPIO9 amplifier path are implemented.
+buttons are active-low, use internal pull-ups, and have 100 ms software
+debounce. They are configured and read through ESP-IDF `gpio_config()` and
+`gpio_get_level()` using raw GPIO numbers; this avoids Arduino board-variant
+pin translation. An accepted press immediately dismisses a detection page and
+redraws the scan screen with the new setting. The volume state gates alert
+audio, although actual sound remains disabled until the ES8311 codec and GPIO9
+amplifier path are implemented.
+
+At boot, USB serial reports the initial electrical levels for GPIO1 and GPIO42.
+An unpressed active-low button should report level `1`; pressing it should take
+the level to `0`. This provides a direct hardware diagnostic independent of the
+screen state.
 
 ## Confidence model
 

@@ -225,7 +225,7 @@ bool aipiDisplayBegin() {
 
 void aipiDisplayShowScan(uint8_t channel, int detections, bool allChannels,
                          uint8_t volumePercent) {
-  if (!ready || detection_view) return;
+  if (!ready) return;
   if (channel == rendered_channel && detections == rendered_detections &&
       allChannels == rendered_all_channels && volumePercent == rendered_volume) {
     return;
@@ -254,8 +254,10 @@ void aipiDisplayShowDetection(const char* oui, int8_t rssi, uint8_t channel, uin
 void aipiDisplayTick(uint8_t channel, int detections, bool allChannels,
                      uint8_t volumePercent) {
   if (!ready) return;
-  if (detection_view && static_cast<int32_t>(millis() - detection_until) >= 0) {
-    renderScan(channel, detections, allChannels, volumePercent);
+  if (detection_view) {
+    if (static_cast<int32_t>(millis() - detection_until) >= 0) {
+      renderScan(channel, detections, allChannels, volumePercent);
+    }
     return;
   }
   aipiDisplayShowScan(channel, detections, allChannels, volumePercent);
