@@ -38,7 +38,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 
 #define LEFT_BUTTON_PIN  GPIO_NUM_1
 #define RIGHT_BUTTON_PIN GPIO_NUM_42
-#define BUTTON_DEBOUNCE_MS 100
+#define BUTTON_DEBOUNCE_MS 35
 #define BATTERY_POLL_MS 30000
 
 #define HEARTBEAT_MS    30000
@@ -228,13 +228,14 @@ static uint32_t channelSwitchFailures = 0;
 
 typedef struct {
   gpio_num_t pin;
+  const char* name;
   bool rawPressed;
   bool stablePressed;
   uint32_t changedAt;
 } ButtonState;
 
-static ButtonState leftButton = {LEFT_BUTTON_PIN, false, false, 0};
-static ButtonState rightButton = {RIGHT_BUTTON_PIN, false, false, 0};
+static ButtonState leftButton = {LEFT_BUTTON_PIN, "left", false, false, 0};
+static ButtonState rightButton = {RIGHT_BUTTON_PIN, "right", false, false, 0};
 
 // Dedupe table (small circular, avoids single-slot eviction bug).
 // This is the *serial-rate-limit* dedup — it suppresses beep + emit within
@@ -464,6 +465,11 @@ static bool buttonIsPressed(const ButtonState* button) {
 }
 
 static void initButtons() {
+  // Clear any configuration inherited from boot/JTAG before assigning these
+  // pads to the two active-low AiPi buttons.
+  gpio_reset_pin(LEFT_BUTTON_PIN);
+  gpio_reset_pin(RIGHT_BUTTON_PIN);
+
   gpio_config_t config = {};
   config.pin_bit_mask = (1ULL << LEFT_BUTTON_PIN) | (1ULL << RIGHT_BUTTON_PIN);
   config.mode = GPIO_MODE_INPUT;
@@ -476,6 +482,8 @@ static void initButtons() {
                esp_err_to_name(err), (unsigned)err);
     return;
   }
+  gpio_pullup_en(LEFT_BUTTON_PIN);
+  gpio_pullup_en(RIGHT_BUTTON_PIN);
 
   leftButton.rawPressed = buttonIsPressed(&leftButton);
   leftButton.stablePressed = leftButton.rawPressed;
@@ -493,6 +501,9 @@ static bool pressedEdge(ButtonState* button) {
   if (pressed != button->rawPressed) {
     button->rawPressed = pressed;
     button->changedAt = now;
+    dualPrintf("[flockyou] button=%s raw=%s gpio=%d\n",
+               button->name, pressed ? "pressed" : "released",
+               gpio_get_level(button->pin));
   }
   if (pressed != button->stablePressed &&
       now - button->changedAt >= BUTTON_DEBOUNCE_MS) {
