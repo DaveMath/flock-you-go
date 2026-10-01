@@ -37,6 +37,7 @@ struct Glyph {
 constexpr Glyph kGlyphs[] = {
   {' ', {0x00,0x00,0x00,0x00,0x00}}, {'-', {0x08,0x08,0x08,0x08,0x08}},
   {'.', {0x00,0x60,0x60,0x00,0x00}}, {':', {0x00,0x36,0x36,0x00,0x00}},
+  {'%', {0x62,0x64,0x08,0x13,0x23}},
   {'/', {0x20,0x10,0x08,0x04,0x02}}, {'?', {0x02,0x01,0x51,0x09,0x06}},
   {'0', {0x3e,0x51,0x49,0x45,0x3e}}, {'1', {0x00,0x42,0x7f,0x40,0x00}},
   {'2', {0x42,0x61,0x51,0x49,0x46}}, {'3', {0x21,0x41,0x45,0x4b,0x31}},
@@ -67,6 +68,10 @@ uint8_t rendered_channel = 0;
 int rendered_detections = -1;
 bool rendered_all_channels = true;
 uint8_t rendered_volume = 100;
+int battery_percent = -1;
+bool battery_charging = false;
+bool battery_blink_visible = true;
+uint32_t battery_blink_at = 0;
 
 const uint8_t* glyphFor(char character) {
   const char normalized = static_cast<char>(toupper(static_cast<unsigned char>(character)));
@@ -166,10 +171,24 @@ void renderScan(uint8_t channel, int detections, bool allChannels,
   if (volumePercent == 0) {
     snprintf(value, sizeof(value), "VOLUME MUTE");
   } else {
-    snprintf(value, sizeof(value), "VOLUME %u%%", volumePercent);
+    snprintf(value, sizeof(value), "VOLUME %u", volumePercent);
   }
   drawText(13, 84, value, volumePercent ? kWhite : kGold, kBlack, 1);
-  drawText(13, 108, "LOCAL READY", kGreen, kBlack, 1);
+  char battery[20];
+  if (battery_percent < 0) {
+    snprintf(battery, sizeof(battery), "BAT --");
+  } else if (battery_charging) {
+    snprintf(battery, sizeof(battery), "BAT %d%% CHG", battery_percent);
+  } else {
+    snprintf(battery, sizeof(battery), "BAT %d%%", battery_percent);
+  }
+  uint16_t batteryColor = kGreen;
+  if (battery_percent < 0) batteryColor = kGray;
+  else if (battery_percent < 10) batteryColor = kRed;
+  else if (battery_percent < 50) batteryColor = kGold;
+  if (battery_blink_visible || !battery_charging || battery_percent >= 50) {
+    drawText(13, 108, battery, batteryColor, kBlack, 1);
+  }
   flush();
   rendered_channel = channel;
   rendered_detections = detections;
@@ -223,6 +242,19 @@ bool aipiDisplayBegin() {
   return true;
 }
 
+void aipiDisplaySetBattery(int percent, bool charging) {
+  if (!ready) return;
+  percent = constrain(percent, 0, 100);
+  if (percent == battery_percent && charging == battery_charging) return;
+  battery_percent = percent;
+  battery_charging = charging;
+  battery_blink_visible = true;
+  battery_blink_at = millis();
+  if (!detection_view) {
+    renderScan(rendered_channel, rendered_detections, rendered_all_channels, rendered_volume);
+  }
+}
+
 void aipiDisplayShowScan(uint8_t channel, int detections, bool allChannels,
                          uint8_t volumePercent) {
   if (!ready) return;
@@ -258,6 +290,13 @@ void aipiDisplayTick(uint8_t channel, int detections, bool allChannels,
     if (static_cast<int32_t>(millis() - detection_until) >= 0) {
       renderScan(channel, detections, allChannels, volumePercent);
     }
+    return;
+  }
+  if (battery_charging && battery_percent >= 0 && battery_percent < 50 &&
+      millis() - battery_blink_at >= 600) {
+    battery_blink_visible = !battery_blink_visible;
+    battery_blink_at = millis();
+    renderScan(channel, detections, allChannels, volumePercent);
     return;
   }
   aipiDisplayShowScan(channel, detections, allChannels, volumePercent);

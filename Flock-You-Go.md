@@ -36,6 +36,9 @@ GPIO15  LCD CS
 GPIO16  LCD SCLK
 GPIO17  LCD MOSI
 GPIO18  LCD reset
+GPIO2   Battery divider ADC input
+GPIO8   Active-low charge status
+GPIO10  Battery power hold
 ```
 
 The backlight is active high. Keep it low during controller reset and
@@ -55,10 +58,11 @@ initialization, then enable it only after `DISPON` completes.
 
 ## Runtime UI
 
-`aipi_display.cpp` owns the SPI device and provides four calls:
+`aipi_display.cpp` owns the SPI device and provides five calls:
 
 ```cpp
 bool aipiDisplayBegin();
+void aipiDisplaySetBattery(int percent, bool charging);
 void aipiDisplayShowScan(uint8_t channel, int detections, bool allChannels,
                          uint8_t volumePercent);
 void aipiDisplayShowDetection(const char* oui, int8_t rssi,
@@ -71,6 +75,10 @@ The Wi-Fi receive callback never touches the display. `drainAlertQueue()` calls
 `aipiDisplayShowDetection()` from normal loop context, preserving the detector's
 bounded callback behavior. `aipiDisplayTick()` restores the scan view after
 3.5 seconds and skips redraws when channel and count are unchanged.
+
+The scan page reserves its bottom row for battery state. It shows `BAT n%`,
+adds `CHG` while GPIO8 is low, uses red below 10%, gold from 10-49%, and green
+from 50% upward. While charging below 50%, the footer blinks every 600 ms.
 
 Low-confidence address observations remain available in the USB JSON and
 SPIFFS session record, but do not replace the scan view. Only medium- and
@@ -115,6 +123,37 @@ At boot, USB serial reports the initial electrical levels for GPIO1 and GPIO42.
 An unpressed active-low button should report level `1`; pressing it should take
 the level to `0`. This provides a direct hardware diagnostic independent of the
 screen state.
+
+## Battery and charge indicator
+
+`aipi_battery.cpp` mirrors the WalkieClaw battery logic using the native
+ESP-IDF 4.4 ADC API supplied by this repository's pinned Arduino toolchain:
+
+- GPIO10 is driven high before display and radio initialization to hold battery
+  power on.
+- GPIO2 maps directly to ADC1 channel 1; no Arduino variant pin translation is
+  used.
+- The ADC uses 12-bit width and the SDK's 11/12 dB attenuation constant.
+- Ten calibrated millivolt samples are averaged and multiplied by `2.5` for the
+  onboard divider.
+- GPIO8 uses an internal pull-up and reads low while charging.
+- Battery data refreshes every 30 seconds and whenever charging state changes.
+
+Percentage is piecewise interpolated across the same LiPo points as WalkieClaw:
+
+| Voltage | Percent |
+|---:|---:|
+| 4.20 V | 100% |
+| 4.10 V | 90% |
+| 3.95 V | 70% |
+| 3.80 V | 50% |
+| 3.70 V | 30% |
+| 3.50 V | 10% |
+| 3.30 V | 0% |
+
+The divider multiplier is explicitly a calibration starting point. Compare the
+logged voltage with a multimeter on the battery before relying on the displayed
+percentage for field runtime decisions.
 
 ## Confidence model
 

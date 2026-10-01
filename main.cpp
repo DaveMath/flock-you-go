@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <SPIFFS.h>
+#include "aipi_battery.h"
 #include "aipi_display.h"
 
 // ============================================================
@@ -38,6 +39,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 #define LEFT_BUTTON_PIN  GPIO_NUM_1
 #define RIGHT_BUTTON_PIN GPIO_NUM_42
 #define BUTTON_DEBOUNCE_MS 100
+#define BATTERY_POLL_MS 30000
 
 #define HEARTBEAT_MS    30000
 #define RSSI_MIN        -100
@@ -211,6 +213,9 @@ static ScanMode scanMode = SCAN_ALL_CHANNELS;
 static const uint8_t volumeLevels[] = {0, 10, 50, 100};
 static size_t volumeIndex = 3;
 static uint8_t outputVolumePercent = volumeLevels[volumeIndex];
+static bool batteryReady = false;
+static AipiBatteryReading batteryReading = {0, 0, false, false};
+static unsigned long lastBatteryRead = 0;
 static unsigned long lastHop = 0;
 static unsigned long lastHeartbeat = 0;
 static volatile bool sniffingStopped = false;
@@ -525,6 +530,29 @@ static void handleButtons() {
   }
 }
 
+static void updateBattery(bool force = false) {
+  if (!batteryReady) return;
+  const bool chargingChanged = aipiBatteryIsCharging() != batteryReading.charging;
+  if (!force && !chargingChanged && millis() - lastBatteryRead < BATTERY_POLL_MS) return;
+
+  AipiBatteryReading reading = {};
+  const esp_err_t result = aipiBatteryRead(&reading);
+  if (result != ESP_OK) {
+    dualPrintf("[flockyou] battery read failed: %s (0x%x)\n",
+               esp_err_to_name(result), (unsigned)result);
+    lastBatteryRead = millis();
+    return;
+  }
+
+  batteryReading = reading;
+  lastBatteryRead = millis();
+  aipiDisplaySetBattery(reading.percent, reading.charging);
+  dualPrintf("[flockyou] battery=%lu.%03luV percent=%u charging=%d adc_calibrated=%d\n",
+             (unsigned long)(reading.millivolts / 1000),
+             (unsigned long)(reading.millivolts % 1000), reading.percent,
+             reading.charging ? 1 : 0, reading.calibrated ? 1 : 0);
+}
+
 static inline uint16_t channelFreqMhz(uint8_t ch) {
   return (ch >= 1 && ch <= 14) ? (uint16_t)(2407 + 5 * ch) : 0;
 }
@@ -570,11 +598,12 @@ static void updateChannelMode() {
 static void printHeartbeat() {
   if (millis() - lastHeartbeat >= HEARTBEAT_MS) {
     uint32_t channelFrames = currentChannel <= 13 ? rxByChannel[currentChannel] : 0;
-    dualPrintf("[flockyou] passive scan ch=%u mode=%s obs=%d rx=%lu mgmt=%lu data=%lu ch_rx=%lu drops=%lu hop_err=%lu\n",
+    dualPrintf("[flockyou] passive scan ch=%u mode=%s obs=%d rx=%lu mgmt=%lu data=%lu ch_rx=%lu drops=%lu hop_err=%lu battery=%u%% charging=%d\n",
                currentChannel, channelModeName(), fyDetCount,
                (unsigned long)rxFrames, (unsigned long)rxMgmtFrames,
                (unsigned long)rxDataFrames, (unsigned long)channelFrames,
-               (unsigned long)queueDrops, (unsigned long)channelSwitchFailures);
+               (unsigned long)queueDrops, (unsigned long)channelSwitchFailures,
+               batteryReading.percent, batteryReading.charging ? 1 : 0);
     lastHeartbeat = millis();
   }
 }
@@ -1207,10 +1236,18 @@ void setup() {
   // Crucial for USB-optional operation: without this, Serial.write() will
   // block indefinitely on an ESP32-S3 USB-CDC port when no host is attached.
   Serial.setTxTimeoutMs(0);
+  const esp_err_t batteryInit = aipiBatteryBegin();
+  batteryReady = batteryInit == ESP_OK;
   delay(300);
 
   const bool displayReady = aipiDisplayBegin();
   initButtons();
+  if (batteryReady) {
+    updateBattery(true);
+  } else {
+    dualPrintf("[flockyou] battery setup failed: %s (0x%x)\n",
+               esp_err_to_name(batteryInit), (unsigned)batteryInit);
+  }
 
 #if MIRROR_SERIAL
   Serial1.begin(115200, SERIAL_8N1, -1, 43);
@@ -1292,6 +1329,7 @@ void setup() {
 
 void loop() {
   handleButtons();
+  updateBattery();
   updateChannelMode();
   drainAlertQueue();   // Serial.printf happens here, not in callback
   autosaveTick();      // periodic SPIFFS write if dirty

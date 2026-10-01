@@ -27,6 +27,9 @@ Wi-Fi, USB-C, a WS2812 status LED, and optional battery operation.
 | LCD reset | 18 | Implemented |
 | Right button | 42 | Alert volume: mute, 10%, 50%, 100% |
 | Left button | 1 | Toggle 1/6/11 and all-channel scanning |
+| Battery voltage | 2 | ADC1, 10-sample average, `2.5` divider multiplier |
+| Charge status | 8 | Active-low input with pull-up |
+| Battery power hold | 10 | Driven high during startup |
 | WS2812 data | 46 | Planned |
 | Speaker amplifier | 9 | Planned |
 
@@ -58,8 +61,10 @@ AIPI Lite hardware:
 Those values fix the reversed colors and the static strips previously visible
 along the left and upper edges.
 
-The normal screen shows the current scan channel, detection count, and local
-logging state. A detection temporarily replaces it with:
+The normal screen shows the current scan channel, detection count, alert volume,
+and battery percentage. The battery footer is red below 10%, gold from 10-49%,
+and green at 50% or above. `CHG` marks active charging, and the footer blinks
+every 600 ms while charging below 50%. A detection temporarily replaces it with:
 
 - matched OUI
 - RSSI
@@ -86,6 +91,18 @@ Both buttons are active-low and read by raw ESP-IDF GPIO number with 100 ms
 debounce. Every accepted press forces an immediate scan-screen redraw. The boot
 log prints the initial GPIO1/GPIO42 levels; an idle button should read `1` and a
 pressed button should read `0`.
+
+Battery handling follows WalkieClaw's native hardware model. GPIO10 is asserted
+at startup so the device remains powered from the battery module. GPIO2 is read
+through ADC1 channel 1 at the SDK's 11/12 dB attenuation setting, averaged over
+ten samples, and multiplied by `2.5` for the onboard divider. GPIO8 reports
+charging as active-low. Readings refresh every 30 seconds and immediately after
+charge state changes.
+
+The percentage is piecewise interpolated through `3.30V=0%`, `3.50V=10%`,
+`3.70V=30%`, `3.80V=50%`, `3.95V=70%`, `4.10V=90%`, and `4.20V=100%`.
+The `2.5` multiplier is a starting value and must be calibrated against a
+multimeter before percentage readings are treated as measurements.
 
 This firmware never calls `WiFi.scanNetworks()`, associates with an access
 point, creates an access point, or transmits probe requests. References to
@@ -153,6 +170,7 @@ The main compile-time settings are at the top of `main.cpp`:
 | `CHANNEL_DWELL_MS` | 700 | Channel dwell time |
 | `LEFT_BUTTON_PIN` | 1 | Runtime scan-mode control |
 | `RIGHT_BUTTON_PIN` | 42 | Runtime alert-volume control |
+| `BATTERY_POLL_MS` | 30000 | Battery refresh interval; charge changes refresh immediately |
 | `RSSI_MIN` | -100 | Medium/high-confidence weak-frame cutoff |
 | `RSSI_LOW_CONFIDENCE_MIN` | -95 | Address-only observation cutoff |
 | `ALERT_COOLDOWN_MS` | 5000 | Per-MAC output rate limit |
