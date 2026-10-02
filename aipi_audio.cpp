@@ -104,7 +104,10 @@ bool beginPlayback() {
 }
 
 bool endPlayback(bool success) {
-  success = writeSilence(25) && success;
+  success = writeSilence(40) && success;
+  // i2s_write() returns after copying into DMA, not after the speaker has
+  // emitted the final frame. Let all six 128-frame buffers drain before mute.
+  delay(60);
   i2s_zero_dma_buffer(kI2sPort);
   delay(4);
   gpio_set_level(kSpeakerEnable, 0);
@@ -182,7 +185,7 @@ bool aipiAudioPlayVolumeSample(uint8_t volumePercent) {
     return endPlayback(writeTone(900, 180, volumePercent));
   }
   if (volumePercent <= 50) return playTwoTone(1500, 1500, 75, 70, volumePercent);
-  return playTwoTone(2000, 2800, 65, 30, volumePercent);
+  return playTwoTone(2000, 2800, 110, 40, volumePercent);
 }
 
 bool aipiAudioPlayNewDetection(uint8_t volumePercent) {

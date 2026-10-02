@@ -492,6 +492,13 @@ static bool pressedEdge(ButtonState* button) {
   return false;
 }
 
+static void resyncButtonAfterBlockingAudio(ButtonState* button) {
+  const bool pressed = buttonIsPressed(button);
+  button->rawPressed = pressed;
+  button->stablePressed = pressed;
+  button->changedAt = millis();
+}
+
 static void handleButtons() {
   bool displayChanged = false;
   bool playVolumeSample = false;
@@ -524,6 +531,10 @@ static void handleButtons() {
     if (!aipiAudioPlayVolumeSample(outputVolumePercent)) {
       dualPrintln("[flockyou] volume sample failed");
     }
+    // Playback is intentionally bounded but synchronous. The user commonly
+    // releases GPIO42 while the tone is playing, so restore its real state
+    // before looking for the next press in the cycle.
+    resyncButtonAfterBlockingAudio(&rightButton);
   }
 }
 
