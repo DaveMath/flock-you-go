@@ -5,16 +5,13 @@
 #include <ctype.h>
 #include <string.h>
 #include <SPIFFS.h>
+#include "aipi_audio.h"
 #include "aipi_battery.h"
 #include "aipi_display.h"
 
 // ============================================================
 // CONFIG
 // ============================================================
-
-// AiPi audio uses the ES8311 codec; direct-pin piezo output is unsafe because
-// GPIO3 is the LCD backlight.
-#define USE_BUZZER 0
 
 // AiPi status light is a GPIO46 WS2812, not a single active-low GPIO.
 #define USE_LED          0
@@ -325,44 +322,26 @@ static void ledTick() {
 #endif
 }
 
-static void buzzerBeep(unsigned int ms) {
-#if USE_BUZZER
-  digitalWrite(BUZZER_PIN, HIGH); delay(ms); digitalWrite(BUZZER_PIN, LOW);
-#endif
-}
-
 // Two fast ascending beeps — played on the FIRST sighting of a MAC.
 static void newDetectChirp() {
   if (outputVolumePercent == 0) return;
-#if USE_BUZZER
-  tone(BUZZER_PIN, NEW_CHIRP_LO_HZ); delay(NEW_CHIRP_NOTE_MS); noTone(BUZZER_PIN);
-  delay(NEW_CHIRP_GAP_MS);
-  tone(BUZZER_PIN, NEW_CHIRP_HI_HZ); delay(NEW_CHIRP_NOTE_MS); noTone(BUZZER_PIN);
-#endif
+  if (!aipiAudioPlayNewDetection(outputVolumePercent)) {
+    dualPrintln("[flockyou] detection sound failed");
+  }
 }
 
 // Two monotone beeps — periodic heartbeat while at least one target is still
 // in range (last seen within HB_DEVICE_ACTIVE_MS).
 static void heartbeatBeep() {
   if (outputVolumePercent == 0) return;
-#if USE_BUZZER
-  tone(BUZZER_PIN, HB_BEEP_HZ); delay(HB_BEEP_NOTE_MS); noTone(BUZZER_PIN);
-  delay(HB_BEEP_GAP_MS);
-  tone(BUZZER_PIN, HB_BEEP_HZ); delay(HB_BEEP_NOTE_MS); noTone(BUZZER_PIN);
-#endif
+  if (!aipiAudioPlayHeartbeat(outputVolumePercent)) {
+    dualPrintln("[flockyou] heartbeat sound failed");
+  }
 }
 static void startupBeep() {
-#if USE_BUZZER
-  // First 6 notes of SMB World 1-2 (underground). Koji Kondo's descending
-  // pattern: C5 → C4 → A4 → A3 → G#4 → G#3 (alternating-octave pairs).
-  static const uint16_t notes[6] = { 523, 262, 440, 220, 415, 208 };
-  for (int i = 0; i < 6; i++) {
-    tone(BUZZER_PIN, notes[i]);
-    delay((i == 5) ? 160 : 95);
-    noTone(BUZZER_PIN);
-    if (i < 5) delay(22);
+  if (!aipiAudioPlayStartup(50)) {
+    dualPrintln("[flockyou] startup sound failed");
   }
-#endif
 }
 
 static void macToStr(const uint8_t* mac, char* buf, size_t len) {
@@ -515,6 +494,7 @@ static bool pressedEdge(ButtonState* button) {
 
 static void handleButtons() {
   bool displayChanged = false;
+  bool playVolumeSample = false;
   if (pressedEdge(&leftButton)) {
     scanMode = scanMode == SCAN_ALL_CHANNELS ? SCAN_1_6_11 : SCAN_ALL_CHANNELS;
     selectFirstChannel();
@@ -533,11 +513,17 @@ static void handleButtons() {
       dualPrintf("[flockyou] alert volume=%u%%\n", outputVolumePercent);
     }
     displayChanged = true;
+    playVolumeSample = true;
   }
 
   if (displayChanged) {
     aipiDisplayShowScan(currentChannel, fyDetCount,
                         scanMode == SCAN_ALL_CHANNELS, outputVolumePercent);
+  }
+  if (playVolumeSample && outputVolumePercent > 0) {
+    if (!aipiAudioPlayVolumeSample(outputVolumePercent)) {
+      dualPrintln("[flockyou] volume sample failed");
+    }
   }
 }
 
@@ -1253,6 +1239,9 @@ void setup() {
 
   const bool displayReady = aipiDisplayBegin();
   initButtons();
+  const bool audioReady = aipiAudioBegin();
+  dualPrintf("[flockyou] ES8311 audio=%s i2c=0x18 amp_gpio=9 i2s=16kHz\n",
+             audioReady ? "ready" : "failed");
   if (batteryReady) {
     updateBattery(true);
   } else {
@@ -1262,10 +1251,6 @@ void setup() {
 
 #if MIRROR_SERIAL
   Serial1.begin(115200, SERIAL_8N1, -1, 43);
-#endif
-
-#if USE_BUZZER
-  #error "Implement ES8311 audio before enabling USE_BUZZER"
 #endif
 
 #if USE_LED

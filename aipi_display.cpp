@@ -171,7 +171,7 @@ void renderScan(uint8_t channel, int detections, bool allChannels,
   if (volumePercent == 0) {
     snprintf(value, sizeof(value), "VOLUME MUTE");
   } else {
-    snprintf(value, sizeof(value), "VOLUME %u", volumePercent);
+    snprintf(value, sizeof(value), "VOLUME %u%%", volumePercent);
   }
   drawText(13, 84, value, volumePercent ? kWhite : kGold, kBlack, 1);
   char battery[20];

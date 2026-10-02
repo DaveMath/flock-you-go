@@ -31,12 +31,12 @@ Wi-Fi, USB-C, a WS2812 status LED, and optional battery operation.
 | Charge status | 8 | Active-low input with pull-up |
 | Battery power hold | 10 | Driven high during startup |
 | WS2812 data | 46 | Planned |
-| Speaker amplifier | 9 | Planned |
+| Speaker amplifier | 9 | Active-high, enabled only during playback |
 
 GPIO3 is the LCD backlight on this device. The older XIAO configuration used
 it as a piezo output, which blanked or flickered the AiPi screen. Piezo and
-GPIO21 LED feedback are disabled until the ES8311 speaker and GPIO46 WS2812
-paths are integrated correctly.
+GPIO21 piezo/LED assumptions remain disabled. Sound now uses the ES8311 speaker
+path, while GPIO46 WS2812 feedback remains pending.
 
 ## Display
 
@@ -83,11 +83,11 @@ matching and queues events;
 display rendering, USB output, alerts, and SPIFFS writes happen from `loop()`.
 
 The right button cycles alert volume through `MUTE`, `10%`, `50%`, and `100%`;
-the selection is shown on-screen. The setting gates alert audio, but this AiPi
-build remains silent until the ES8311 codec and GPIO9 amplifier driver are
-enabled.
+nonzero values include the percent sign on-screen and play a sample immediately.
+The 10% sample is a single tone, 50% is the two-pulse heartbeat, and 100% is the
+rising new-detection chirp. Selecting mute produces no sound.
 
-Both buttons are active-low and read by raw ESP-IDF GPIO number with 100 ms
+Both buttons are active-low and read by raw ESP-IDF GPIO number with 35 ms
 debounce. Every accepted press forces an immediate scan-screen redraw. The boot
 log prints the initial GPIO1/GPIO42 levels; an idle button should read `1` and a
 pressed button should read `0`.
@@ -178,7 +178,9 @@ The main compile-time settings are at the top of `main.cpp`:
 | `CHECK_ADDR3` | 0 | Optional BSSID matching |
 | `MAX_DETECTIONS` | 200 | Local table capacity |
 | `AUTOSAVE_INTERVAL_MS` | 60000 | SPIFFS save interval |
-| `USE_BUZZER` | 0 | Disabled pending ES8311 support |
+| ES8311 I2C | GPIO4 SCL, GPIO5 SDA | Codec control at address `0x18` |
+| ES8311 I2S | GPIO14 BCLK, GPIO12 WS, GPIO11 DOUT | 16 kHz, 16-bit duplicated mono |
+| Speaker amplifier | GPIO9 | DAC muted and amplifier off while idle |
 | `USE_LED` | 0 | Disabled pending GPIO46 WS2812 support |
 
 ## Safety and provenance

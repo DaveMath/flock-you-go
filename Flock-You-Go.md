@@ -111,13 +111,15 @@ the new plan and restarts the dwell timer.
 The scan screen writes the selected mode as `ALL CHANNELS` or `SCAN 1-6-11`
 above the live channel number. The right button on GPIO42 cycles the alert
 volume through `MUTE`, `10%`, `50%`, and `100%`, also shown on-screen. Both
-buttons are active-low, use internal pull-ups, and have 100 ms software
+buttons are active-low, use internal pull-ups, and have 35 ms software
 debounce. They are configured and read through ESP-IDF `gpio_config()` and
 `gpio_get_level()` using raw GPIO numbers; this avoids Arduino board-variant
 pin translation. An accepted press immediately dismisses a detection page and
-redraws the scan screen with the new setting. The volume state gates alert
-audio, although actual sound remains disabled until the ES8311 codec and GPIO9
-amplifier path are implemented.
+redraws the scan screen with the new setting. Each nonzero volume selection
+plays an immediate sample: a single tone at 10%, the heartbeat pair at 50%, and
+the rising detection chirp at 100%. The ES8311 is controlled over GPIO4/GPIO5,
+receives 16 kHz I2S on GPIO14/GPIO12/GPIO11, and uses GPIO9 to enable the
+speaker amplifier only during playback.
 
 At boot, USB serial reports the initial electrical levels for GPIO1 and GPIO42.
 An unpressed active-low button should report level `1`; pressing it should take
@@ -196,8 +198,7 @@ The inherited firmware used GPIO3 as a piezo buzzer and GPIO21 as an active-low
 user LED. Those are XIAO board assumptions, not AIPI Lite assignments. This
 build disables both paths:
 
-- sound remains off until the ES8311 codec and GPIO9 amplifier sequencing are
-  implemented
+- sound uses the ES8311 codec and GPIO9 amplifier instead of GPIO3
 - visual alert output uses the LCD until the GPIO46 WS2812 driver is integrated
 
 This prevents the alert path from toggling the LCD backlight or an unrelated
@@ -213,7 +214,8 @@ After flashing:
 3. `ALL CHANNELS` follows the prioritized 1-11 sequence at 700 ms dwell.
 4. The left button switches to `SCAN 1-6-11`, and the displayed channel follows
    1, 6, 11 before repeating; pressing it again restores `ALL CHANNELS`.
-5. The right button cycles the visible volume through mute, 10%, 50%, and 100%.
+5. The right button cycles the visible volume through mute, 10%, 50%, and 100%;
+   each nonzero selection plays its sample sound.
 6. Serial health output shows increasing receive counters with zero queue drops
    and channel-switch failures under normal operation.
 7. A medium/high test observation replaces the scan page and returns after 3.5
