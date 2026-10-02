@@ -76,6 +76,12 @@ The Wi-Fi receive callback never touches the display. `drainAlertQueue()` calls
 bounded callback behavior. `aipiDisplayTick()` restores the scan view after
 3.5 seconds and skips redraws when channel and count are unchanged.
 
+Distinct MAC identities are displayed and stored as separate signal hits. The
+screen shows the session-wide signal-hit number, and each newly observed MAC
+plays its own rising alert. Packet repeats for the same MAC remain rate-limited,
+so three radio identities produce three visible, audible hits without turning
+one transmitter burst into an audio loop.
+
 The scan page reserves its bottom row for battery state. It shows `BAT n%`,
 adds `CHG` while GPIO8 is low, uses red below 10%, gold from 10-49%, and green
 from 50% upward. While charging below 50%, the footer blinks every 600 ms.

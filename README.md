@@ -61,7 +61,7 @@ AIPI Lite hardware:
 Those values fix the reversed colors and the static strips previously visible
 along the left and upper edges.
 
-The normal screen shows the current scan channel, detection count, alert volume,
+The normal screen shows the current scan channel, signal-identity count, alert volume,
 and battery percentage. The battery footer is red below 10%, gold from 10-49%,
 and green at 50% or above. `CHG` marks active charging, and the footer blinks
 every 600 ms while charging below 50%. A detection temporarily replaces it with:
@@ -69,7 +69,7 @@ every 600 ms while charging below 50%. A detection temporarily replaces it with:
 - matched OUI
 - RSSI
 - Wi-Fi channel
-- observation count
+- signal-hit number
 - local-save confirmation
 
 ## Detection behavior
@@ -81,6 +81,14 @@ plan and the faster `1, 6, 11` plan. The active mode is written on-screen as
 `ALL CHANNELS` or `SCAN 1-6-11`. The receive callback performs only bounded
 matching and queues events;
 display rendering, USB output, alerts, and SPIFFS writes happen from `loop()`.
+
+Each distinct MAC identity is intentionally counted as a separate signal hit.
+A camera installation can expose multiple Wi-Fi/BLE identities, so the first
+three identities observed at a site appear as `SIGNAL HIT` 1, 2, and 3 rather
+than being collapsed into one presumed physical camera. Every new identity
+plays the rising detection alert. Repeated packets from the same MAC remain
+rate-limited for five seconds and do not replay audio; a known MAC becomes a
+fresh audible discovery after 30 seconds out of range.
 
 The right button cycles alert volume through `MUTE`, `10%`, `50%`, and `100%`;
 nonzero values include the percent sign on-screen and play a sample immediately.

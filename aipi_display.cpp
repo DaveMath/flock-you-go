@@ -166,7 +166,7 @@ void renderScan(uint8_t channel, int detections, bool allChannels,
   char value[24];
   snprintf(value, sizeof(value), "CHANNEL %02u", channel);
   drawText(13, 50, value, kWhite, kBlack, 1);
-  snprintf(value, sizeof(value), "HITS %03d", min(detections, 999));
+  snprintf(value, sizeof(value), "SIGNALS %03d", min(detections, 999));
   drawText(13, 67, value, detections ? kGold : kWhite, kBlack, 1);
   if (volumePercent == 0) {
     snprintf(value, sizeof(value), "VOLUME MUTE");
@@ -265,17 +265,18 @@ void aipiDisplayShowScan(uint8_t channel, int detections, bool allChannels,
   renderScan(channel, detections, allChannels, volumePercent);
 }
 
-void aipiDisplayShowDetection(const char* oui, int8_t rssi, uint8_t channel, uint16_t count) {
+void aipiDisplayShowDetection(const char* oui, int8_t rssi, uint8_t channel,
+                              uint16_t signalHit) {
   if (!ready) return;
   fillRect(0, 0, kWidth, kHeight, kBlack);
   fillRect(0, 0, kWidth, 24, kGold);
-  drawText(11, 4, "DETECTED", kBlack, kGold, 2);
+  drawTextCondensed(4, 4, "SIGNAL HIT", kBlack, kGold, 2);
   drawText(8, 34, "OUI", kGray, kBlack);
   drawText(8, 47, oui && oui[0] ? oui : "UNKNOWN", kWhite, kBlack, 2);
   char value[24];
   snprintf(value, sizeof(value), "RSSI %d DBM", rssi);
   drawText(8, 72, value, kWhite, kBlack);
-  snprintf(value, sizeof(value), "CH %02u  COUNT %u", channel, count);
+  snprintf(value, sizeof(value), "CH %02u  HIT %u", channel, signalHit);
   drawText(8, 88, value, kWhite, kBlack);
   drawText(8, 108, "SAVED LOCAL", kGreen, kBlack);
   flush();

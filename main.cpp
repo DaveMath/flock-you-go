@@ -1186,7 +1186,7 @@ static void drainAlertQueue() {
 
     if (e.confidence >= CONFIDENCE_MEDIUM) {
       aipiDisplayShowDetection(oui, e.rssi, e.channel,
-                               (idx >= 0) ? fyDet[idx].count : 0);
+                               (idx >= 0) ? static_cast<uint16_t>(idx + 1) : 0);
     }
 
     // Flask-compatible JSON line (parsed by api/flockyou.py over USB CDC).
@@ -1194,7 +1194,7 @@ static void drainAlertQueue() {
                       (e.type == ALERT_SSID) ? e.ssid : "");
 
     // Audio feedback:
-    //   - NEW MAC  → two fast ascending beeps (clearly distinct sound)
+    //   - NEW SIGNAL IDENTITY → two fast ascending beeps for each MAC
     //   - REPEAT   → silent; the heartbeat tick covers continued presence
     // LED flashes on every emitted detection either way.
     if (chirpWorthy && e.confidence >= CONFIDENCE_MEDIUM) {
