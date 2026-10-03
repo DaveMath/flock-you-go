@@ -28,7 +28,7 @@ Wi-Fi, USB-C, a WS2812 status LED, and optional battery operation.
 | LCD MOSI | 17 | Implemented |
 | LCD reset | 18 | Implemented |
 | Right button | 42 | Alert volume: mute, 10%, 50%, 100% |
-| Left button | 1 | Short press: scan mode; 2-second hold: deep-sleep shutdown/wake |
+| Left button | 1 | Short release: scan mode; 3-second hold plus 3-second countdown: deep-sleep shutdown/wake |
 | Battery voltage | 2 | ADC1, 10-sample average, `2.5` divider multiplier |
 | Charge status | 8 | Active-low input with pull-up |
 | Battery power hold | 10 | Driven high during startup |
@@ -103,10 +103,12 @@ accepted alert, including a receiver-side observation that the scanner has
 counted as a signal. Selecting mute produces no sound.
 
 The bottom labels are `SCAN/OFF` above the left button and `VOL/SCREEN` above
-the right button. Release the left button after a short press to switch the
-scan plan. Hold it to show a `3`, `2`, `1`, then `GOODBYE` shutdown countdown;
-release after `GOODBYE` to save state, stop passive receive, and shut the
-ESP32-S3 down into deep sleep. Press the left button again to wake it.
+the right button. Release the left button before three seconds to switch the
+scan plan. Holding it past three seconds begins the separate `3`, `2`, `1`,
+then `GOODBYE` shutdown countdown. Release after `GOODBYE` to save state, stop
+passive receive, and shut the ESP32-S3 down into deep sleep. Releasing during
+the countdown cancels shutdown without changing the scan plan. Press the left
+button again to wake it.
 Hold the right button for two seconds to enter the display-sleep
 selector. While held, it advances through `1 MIN`, `5 MIN`, and `NEVER` every
 two seconds; release to save the setting currently shown. Any button press or
@@ -119,12 +121,12 @@ pressed button should read `0`.
 
 ### Long-press shutdown design
 
-The left control deliberately has two release-safe actions. A short press does
-not change the scan mode until the button is released, so a long hold can never
-accidentally alter the channel plan before shutdown. The screen visibly counts
-down `3`, `2`, `1`, then `GOODBYE`; release after that confirmation to save
-pending session data, disable promiscuous receive, stop Wi-Fi, turn off the
-display backlight, and enter ESP32-S3 deep sleep.
+The left control deliberately has three release-safe phases. Releasing before
+three seconds changes the scan plan. Holding past three seconds begins a fresh
+three-second `3`, `2`, `1`, `GOODBYE` countdown. Releasing during that countdown
+cancels shutdown and preserves the current scan plan; release after `GOODBYE`
+to save pending session data, disable promiscuous receive, stop Wi-Fi, turn off
+the display backlight, and enter ESP32-S3 deep sleep.
 
 This is a genuine low-power shutdown rather than a screen blank. It stops the
 receiver and avoids continuing to consume battery while the device appears

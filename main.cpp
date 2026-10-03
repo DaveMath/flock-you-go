@@ -38,6 +38,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 #define RIGHT_BUTTON_PIN GPIO_NUM_42
 #define BUTTON_DEBOUNCE_MS 35
 #define SHUTDOWN_HOLD_MS 3000
+#define SHUTDOWN_COUNTDOWN_MS 3000
 #define SCREEN_TIMEOUT_HOLD_MS 2000
 #define SCREEN_TIMEOUT_CYCLE_MS 2000
 #define BATTERY_POLL_MS 30000
@@ -260,10 +261,12 @@ static const uint8_t screenTimeoutMinutes[] = {1, 5, 0};
 static size_t screenTimeoutIndex = 0;
 static unsigned long screenLastActivityAt = 0;
 static unsigned long leftButtonPressedAt = 0;
+static unsigned long leftShutdownCountdownStartedAt = 0;
 static uint8_t leftShutdownCountdownShown = 0xff;
 static unsigned long rightButtonPressedAt = 0;
 static unsigned long rightButtonNextCycleAt = 0;
 static bool leftButtonLongPressApplied = false;
+static bool leftShutdownCountdownActive = false;
 static bool rightButtonLongPressApplied = false;
 static bool screenBacklightOn = true;
 
@@ -553,25 +556,33 @@ static void handleButtons() {
   if (leftPressed) {
     leftButtonPressedAt = millis();
     leftButtonLongPressApplied = false;
-    leftShutdownCountdownShown = 3;
+    leftShutdownCountdownActive = false;
+    leftShutdownCountdownShown = 0xff;
     screenWake();
-    aipiDisplayShowShutdownCountdown(leftShutdownCountdownShown);
   }
 
   const unsigned long now = millis();
-  if (leftButton.stablePressed && !leftButtonLongPressApplied &&
-      now - leftButtonPressedAt >= 1000) {
-    const unsigned long elapsed = now - leftButtonPressedAt;
-    const uint8_t remaining = elapsed >= SHUTDOWN_HOLD_MS
-                                  ? 0
-                                  : static_cast<uint8_t>(3 - (elapsed / 1000));
-    if (remaining != leftShutdownCountdownShown) {
-      leftShutdownCountdownShown = remaining;
-      aipiDisplayShowShutdownCountdown(remaining);
+  if (leftButton.stablePressed && !leftButtonLongPressApplied) {
+    if (!leftShutdownCountdownActive && now - leftButtonPressedAt >= SHUTDOWN_HOLD_MS) {
+      leftShutdownCountdownActive = true;
+      leftShutdownCountdownStartedAt = now;
+      leftShutdownCountdownShown = 3;
+      aipiDisplayShowShutdownCountdown(leftShutdownCountdownShown);
+      dualPrintln("[flockyou] shutdown countdown started");
     }
-    if (elapsed >= SHUTDOWN_HOLD_MS) {
-      leftButtonLongPressApplied = true;
-      dualPrintln("[flockyou] shutdown armed; release left button to sleep");
+    if (leftShutdownCountdownActive) {
+      const unsigned long elapsed = now - leftShutdownCountdownStartedAt;
+      const uint8_t remaining = elapsed >= SHUTDOWN_COUNTDOWN_MS
+                                    ? 0
+                                    : static_cast<uint8_t>(3 - (elapsed / 1000));
+      if (remaining != leftShutdownCountdownShown) {
+        leftShutdownCountdownShown = remaining;
+        aipiDisplayShowShutdownCountdown(remaining);
+      }
+      if (elapsed >= SHUTDOWN_COUNTDOWN_MS) {
+        leftButtonLongPressApplied = true;
+        dualPrintln("[flockyou] shutdown armed; release left button to sleep");
+      }
     }
   }
 
@@ -580,6 +591,11 @@ static void handleButtons() {
     // GPIO1 is also the active-low wake source. Waiting for release prevents
     // its held-low state from immediately waking the freshly sleeping chip.
     shutdownToDeepSleep();
+  } else if (leftReleased && leftShutdownCountdownActive) {
+    leftShutdownCountdownActive = false;
+    dualPrintln("[flockyou] shutdown countdown cancelled");
+    screenWake();
+    displayChanged = true;
   } else if (leftReleased) {
     scanMode = scanMode == SCAN_ALL_CHANNELS ? SCAN_1_6_11 : SCAN_ALL_CHANNELS;
     selectFirstChannel();

@@ -126,9 +126,10 @@ the hit counter remains below it. Release the right button on GPIO42 to cycle
 the alert volume through `MUTE`, `10%`, `50%`, and `100%`; each nonzero setting
 plays a sample immediately. Bottom labels identify the buttons as `SCAN/OFF`
 and `VOL/SCREEN`. Release a short left-button press to change the scan plan;
-hold it to show the `3`, `2`, `1`, then `GOODBYE` countdown. Release after
-`GOODBYE` to save state, stop passive receive, and put the ESP32-S3 into deep
-sleep. Press the left button again to wake it.
+hold it longer than three seconds to begin the separate `3`, `2`, `1`, then
+`GOODBYE` countdown. Release after `GOODBYE` to save state, stop passive
+receive, and put the ESP32-S3 into deep sleep. Release during the countdown to
+cancel without changing the scan plan. Press the left button again to wake it.
 Hold the right button for two seconds, then keep holding to cycle
 screen sleep `1 MIN`, `5 MIN`, and `NEVER` every two seconds; release to save
 the displayed selection. Any button press or newly accepted signal wakes the
@@ -142,11 +143,11 @@ uses GPIO9 to enable the speaker amplifier only during playback.
 ### Long-press shutdown design
 
 The left button action is deferred until release so short `SCAN/OFF` presses
-continue to change only the scan plan. A three-second hold instead saves any
-pending detection session only after the button is released, then disables
-passive promiscuous receive, stops Wi-Fi, turns the backlight off, and starts
-ESP32-S3 deep sleep. The new three-second `3`, `2`, `1`, `GOODBYE` countdown
-makes that point of no return visible before release. The device is actually
+continue to change only the scan plan. Holding past three seconds starts a
+second, visible three-second `3`, `2`, `1`, `GOODBYE` countdown. Releasing
+during that confirmation cancels shutdown; release after `GOODBYE` saves any
+pending detection session, disables passive promiscuous receive, stops Wi-Fi,
+turns the backlight off, and starts ESP32-S3 deep sleep. The device is actually
 powered down at the CPU/radio level rather than merely showing a black screen.
 
 GPIO1 is configured as the active-low EXT1 wake source. Press it after shutdown
