@@ -140,6 +140,11 @@ numbers; this avoids Arduino board-variant pin translation. The ES8311 is
 controlled over GPIO4/GPIO5, receives 16 kHz I2S on GPIO14/GPIO12/GPIO11, and
 uses GPIO9 to enable the speaker amplifier only during playback.
 
+When the backlight is asleep, the first debounced press of either physical
+button is wake-only. Its release is consumed and cannot change scan mode,
+volume, screen timeout, or the shutdown state. The user presses again after
+the screen is visible to perform the intended action.
+
 ## NVS user preferences
 
 The Arduino application uses ESP-IDF NVS directly, in namespace

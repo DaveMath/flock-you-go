@@ -126,6 +126,11 @@ selector. While held, it advances through `1 MIN`, `5 MIN`, and `NEVER` every
 two seconds; release to save the setting currently shown. Any button press or
 newly accepted signal wakes the display.
 
+When the display is asleep, the first accepted press of either button is
+consumed as a wake-only gesture. Its release does not change the scan plan,
+volume, timeout, or shutdown state. Press again after the panel is visible to
+operate that control.
+
 Both buttons are active-low and read by raw ESP-IDF GPIO number with 35 ms
 debounce. Every accepted press forces an immediate scan-screen redraw. The boot
 log prints the initial GPIO1/GPIO42 levels; an idle button should read `1` and a

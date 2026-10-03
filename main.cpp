@@ -272,6 +272,8 @@ static bool leftButtonLongPressApplied = false;
 static bool leftShutdownCountdownActive = false;
 static bool rightButtonLongPressApplied = false;
 static bool screenBacklightOn = true;
+static bool leftButtonWakeOnly = false;
+static bool rightButtonWakeOnly = false;
 static bool userSettingsReady = false;
 
 // ============================================================
@@ -607,6 +609,7 @@ static void handleButtons() {
   const bool leftWasPressed = leftButton.stablePressed;
   const bool leftPressed = pressedEdge(&leftButton);
   if (leftPressed) {
+    leftButtonWakeOnly = !screenBacklightOn;
     leftButtonPressedAt = millis();
     leftButtonLongPressApplied = false;
     leftShutdownCountdownActive = false;
@@ -615,7 +618,7 @@ static void handleButtons() {
   }
 
   const unsigned long now = millis();
-  if (leftButton.stablePressed && !leftButtonLongPressApplied) {
+  if (leftButton.stablePressed && !leftButtonWakeOnly && !leftButtonLongPressApplied) {
     if (!leftShutdownCountdownActive && now - leftButtonPressedAt >= SHUTDOWN_HOLD_MS) {
       leftShutdownCountdownActive = true;
       leftShutdownCountdownStartedAt = now;
@@ -640,7 +643,10 @@ static void handleButtons() {
   }
 
   const bool leftReleased = leftWasPressed && !leftButton.stablePressed;
-  if (leftReleased && leftButtonLongPressApplied) {
+  if (leftReleased && leftButtonWakeOnly) {
+    leftButtonWakeOnly = false;
+    dualPrintln("[flockyou] left button consumed as screen wake");
+  } else if (leftReleased && leftButtonLongPressApplied) {
     // GPIO1 is also the active-low wake source. Waiting for release prevents
     // its held-low state from immediately waking the freshly sleeping chip.
     shutdownToDeepSleep();
@@ -662,13 +668,14 @@ static void handleButtons() {
   const bool rightWasPressed = rightButton.stablePressed;
   const bool rightPressed = pressedEdge(&rightButton);
   if (rightPressed) {
+    rightButtonWakeOnly = !screenBacklightOn;
     rightButtonPressedAt = millis();
     rightButtonNextCycleAt = 0;
     rightButtonLongPressApplied = false;
     screenWake();
   }
 
-  if (rightButton.stablePressed && !rightButtonLongPressApplied &&
+  if (rightButton.stablePressed && !rightButtonWakeOnly && !rightButtonLongPressApplied &&
       now - rightButtonPressedAt >= SCREEN_TIMEOUT_HOLD_MS) {
     screenTimeoutIndex = (screenTimeoutIndex + 1) %
                          (sizeof(screenTimeoutMinutes) / sizeof(screenTimeoutMinutes[0]));
@@ -680,7 +687,7 @@ static void handleButtons() {
                screenTimeoutMinutes[screenTimeoutIndex] ?
                    (screenTimeoutMinutes[screenTimeoutIndex] == 1 ? "1_min" : "5_min") :
                    "never");
-  } else if (rightButton.stablePressed && rightButtonLongPressApplied &&
+  } else if (rightButton.stablePressed && !rightButtonWakeOnly && rightButtonLongPressApplied &&
              static_cast<long>(now - rightButtonNextCycleAt) >= 0) {
     screenTimeoutIndex = (screenTimeoutIndex + 1) %
                          (sizeof(screenTimeoutMinutes) / sizeof(screenTimeoutMinutes[0]));
@@ -694,7 +701,10 @@ static void handleButtons() {
   }
 
   const bool rightReleased = rightWasPressed && !rightButton.stablePressed;
-  if (rightReleased && rightButtonLongPressApplied) {
+  if (rightReleased && rightButtonWakeOnly) {
+    rightButtonWakeOnly = false;
+    dualPrintln("[flockyou] right button consumed as screen wake");
+  } else if (rightReleased && rightButtonLongPressApplied) {
     screenWake();
     aipiDisplayConfirmSleepSetting(screenTimeoutMinutes[screenTimeoutIndex]);
     saveUserSettings();
