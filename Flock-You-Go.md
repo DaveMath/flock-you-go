@@ -217,14 +217,18 @@ Observations are classified before local alerting:
 
 | Confidence | Evidence | Device behavior |
 |---|---|---|
-| High | Known transmitter OUI plus received wildcard probe signature | Display and alert |
-| Medium | Known transmitter OUI in a management frame, or configured SSID | Display and alert |
-| Low | Receiver/BSSID address match or known OUI in a data frame | Log and persist only |
+| High | Direct Flock OUI plus received wildcard probe signature | Display and alert |
+| Medium | Direct Flock transmitter OUI in a management frame, or configured Flock SSID | Display and alert |
+| Low | Receiver/BSSID address match or direct Flock OUI in a data frame | Log and persist only |
 
 The general receive floor is `-100 dBm`. Low-confidence address-only evidence
 uses the stricter `-95 dBm` floor. If later traffic promotes an existing MAC
 from low confidence to medium or high confidence, its stored method and
 confidence are upgraded and the local alert path is activated.
+
+The OUI-only matcher is intentionally limited to `B4:1E:52`, the IEEE block
+assigned directly to Flock Safety. Shared contract-manufacturer prefixes are
+not treated as Flock evidence without independent corroboration.
 
 ## Receiver health and initialization
 

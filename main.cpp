@@ -85,21 +85,14 @@ static const size_t SSID_KEYWORD_COUNT = sizeof(target_ssid_keywords) / sizeof(t
 #define USER_SETTINGS_NAMESPACE "flock_you_go"
 
 // ============================================================
-// TARGET OUI LIST  (all lowercase, colons only)
+// DIRECT FLOCK SAFETY OUI LIST  (all lowercase, colons only)
 // ============================================================
 
+// B4:1E:52 is assigned directly to Flock Safety by the IEEE. Shared radio and
+// contract-manufacturer prefixes are intentionally excluded: an OUI alone does
+// not identify the brand of the finished device.
 static const char* target_ouis[] = {
-  "70:c9:4e", "3c:91:80", "d8:f3:bc", "80:30:49", "b8:35:32",
-  "14:5a:fc", "74:4c:a1", "08:3a:88", "9c:2f:9d", "c0:35:32",
-  "94:08:53", "e4:aa:ea", "f4:6a:dd", "f8:a2:d6", "24:b2:b9",
-  "00:f4:8d", "d0:39:57", "e8:d0:fc", "e0:4f:43", "b8:1e:a4",
-  "70:08:94", "58:8e:81", "ec:1b:bd", "3c:71:bf", "58:00:e3",
-  "90:35:ea", "5c:93:a2", "64:6e:69", "48:27:ea", "a4:cf:12",
-  // Contributed by Michael / DeFlockJoplin — discovered via wildcard-probe
-  // + OUI signature during field testing. The 12th camera in his drive-test
-  // used this prefix and wasn't in @NitekryDPaul's original 30.
-  "82:6b:f2"
-
+  "b4:1e:52",
 };
 static const size_t OUI_COUNT = sizeof(target_ouis) / sizeof(target_ouis[0]);
 

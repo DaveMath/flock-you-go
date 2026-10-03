@@ -176,9 +176,9 @@ devices. The scanner does not generate those frames.
 
 Observations are ranked before alerting:
 
-- **High:** known-OUI wildcard probe signature observed on the air
-- **Medium:** known transmitter OUI in a management frame, or configured SSID
-- **Low:** address-only receiver/BSSID or data-frame OUI match
+- **High:** direct Flock OUI plus a wildcard probe signature observed on the air
+- **Medium:** direct Flock transmitter OUI in a management frame, or configured Flock SSID
+- **Low:** receiver/BSSID address match or data-frame match for the direct Flock OUI
 
 Low-confidence observations are logged and persisted for analysis, but do not
 take over the screen or trigger physical alerts. Medium and high confidence
@@ -192,6 +192,14 @@ Each accepted observation is:
 - emitted as newline-delimited JSON over USB CDC
 
 Medium- and high-confidence observations are also displayed locally.
+
+### OUI evidence policy
+
+The OUI-only table contains only `B4:1E:52`, the IEEE MA-L block assigned
+directly to Flock Safety. Shared component-vendor and contract-manufacturer
+prefixes are not sufficient evidence of a Flock device and are deliberately
+excluded from local alerts. A configured Flock SSID remains an independent
+corroborating signal.
 
 The firmware does not join a Wi-Fi network, create an access point, interfere
 with traffic, or upload detection data.
