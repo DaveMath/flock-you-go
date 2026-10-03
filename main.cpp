@@ -45,6 +45,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 #define RSSI_MIN        -100
 #define RSSI_LOW_CONFIDENCE_MIN -95
 #define ALERT_COOLDOWN_MS (5UL * 60UL * 1000UL)
+#define ENCOUNTER_ABSENCE_MS (10UL * 60UL * 1000UL)
 
 // Audio cadence: two fast ascending beeps on a NEW MAC, then while any
 // target is still in range (seen within HB_DEVICE_ACTIVE_MS), two monotone
@@ -187,12 +188,14 @@ typedef struct {
   uint8_t  channel;
   uint32_t firstSeen;      // millis() at first hit
   uint32_t lastSeen;       // millis() at latest hit
-  uint16_t count;
+  uint16_t count;          // raw observations; does not drive user-facing hits
+  uint16_t encounters;     // first sighting plus returns after a long absence
   char     ssid[33];       // "" unless an SSID hit populated it
 } FYDetection;
 
 static FYDetection fyDet[MAX_DETECTIONS];
 static int           fyDetCount       = 0;
+static uint16_t      fyEncounterCount = 0;
 static bool          fySpiffsReady    = false;
 static bool          fyDirty          = false;
 static unsigned long fyLastSaveAt     = 0;
@@ -233,9 +236,8 @@ static ButtonState leftButton = {LEFT_BUTTON_PIN, "left", false, false, 0};
 static ButtonState rightButton = {RIGHT_BUTTON_PIN, "right", false, false, 0};
 
 // Dedupe table (small circular, avoids single-slot eviction bug).
-// This is the *serial-rate-limit* dedup — it suppresses beep + emit within
-// ALERT_COOLDOWN_MS of a prior hit on the same MAC. The detection table
-// (above) still counts every hit regardless of this suppression.
+// This is the output-rate limiter. The detection table still refreshes RSSI,
+// last-seen, and raw observations even when output is suppressed.
 #define DEDUPE_SLOTS 8
 static struct {
   char mac[18];
@@ -626,7 +628,7 @@ static void handleButtons() {
   }
 
   if (displayChanged) {
-    aipiDisplayShowScan(currentChannel, fyDetCount,
+    aipiDisplayShowScan(currentChannel, fyDetCount, fyEncounterCount,
                         scanMode == SCAN_ALL_CHANNELS, outputVolumePercent,
                         fyLastBogeySeenAt);
   }
@@ -734,15 +736,27 @@ static const char* alertTypeToMethod(AlertType t) {
   }
 }
 
-// Returns index of entry (new or updated), or -1 if table is full.
-static int fyAddDetection(const char* mac, const char* method,
-                          DetectionConfidence confidence, int8_t rssi,
-                          uint8_t ch, const char* ssid) {
+typedef struct {
+  int index;
+  bool encounter;
+  bool newSensor;
+} DetectionUpdate;
+
+// An encounter is a first sighting or a return after ENCOUNTER_ABSENCE_MS.
+// Packet repeats only refresh evidence for the existing sensor.
+static DetectionUpdate fyAddDetection(const char* mac, const char* method,
+                                      DetectionConfidence confidence, int8_t rssi,
+                                      uint8_t ch, const char* ssid) {
   uint32_t now = millis();
   for (int i = 0; i < fyDetCount; i++) {
     if (strcasecmp(fyDet[i].mac, mac) == 0) {
+      const bool encounter = (now - fyDet[i].lastSeen) >= ENCOUNTER_ABSENCE_MS;
       bool promoted = confidence > fyDet[i].confidence;
       if (fyDet[i].count < 0xFFFF) fyDet[i].count++;
+      if (encounter && fyDet[i].encounters < 0xFFFF) {
+        fyDet[i].encounters++;
+        if (fyEncounterCount < 0xFFFF) fyEncounterCount++;
+      }
       fyDet[i].lastSeen = now;
       fyDet[i].rssi     = rssi;
       fyDet[i].channel  = ch;
@@ -754,11 +768,11 @@ static int fyAddDetection(const char* mac, const char* method,
         strlcpy(fyDet[i].ssid, ssid, sizeof(fyDet[i].ssid));
       }
       fyDirty = true;
-      return i;
+      return {i, encounter, false};
     }
   }
   if (fyDetCount >= MAX_DETECTIONS) {
-    return -1;
+    return {-1, false, false};
   }
   FYDetection& d = fyDet[fyDetCount];
   strlcpy(d.mac,    mac,                       sizeof(d.mac));
@@ -769,11 +783,13 @@ static int fyAddDetection(const char* mac, const char* method,
   d.firstSeen = now;
   d.lastSeen  = now;
   d.count     = 1;
+  d.encounters = 1;
   if (ssid && ssid[0]) strlcpy(d.ssid, ssid, sizeof(d.ssid));
   else                 d.ssid[0] = '\0';
   fyDetCount++;
+  if (fyEncounterCount < 0xFFFF) fyEncounterCount++;
   fyDirty = true;
-  return fyDetCount - 1;
+  return {fyDetCount - 1, true, true};
 }
 
 // ============================================================
@@ -839,10 +855,11 @@ static size_t fySerializeDet(const FYDetection& d, char* dst, size_t cap) {
   jsonEscape(ssidEsc, sizeof(ssidEsc), d.ssid);
   int n = snprintf(dst, cap,
       "{\"mac\":\"%s\",\"method\":\"%s\",\"confidence\":\"%s\",\"rssi\":%d,\"channel\":%u,"
-      "\"first\":%lu,\"last\":%lu,\"count\":%u,\"ssid\":\"%s\"}",
+      "\"first\":%lu,\"last\":%lu,\"count\":%u,\"observations\":%u,"
+      "\"encounters\":%u,\"ssid\":\"%s\"}",
       d.mac, d.method, confidenceName(d.confidence), d.rssi, (unsigned)d.channel,
       (unsigned long)d.firstSeen, (unsigned long)d.lastSeen, (unsigned)d.count,
-      ssidEsc);
+      (unsigned)d.count, (unsigned)d.encounters, ssidEsc);
   return (n > 0 && (size_t)n < cap) ? (size_t)n : 0;
 }
 
@@ -1054,23 +1071,26 @@ static void emitDetectionJSON(const char* event, const FYDetection& d,
       "\"rssi\":%d,"
       "\"channel\":%u,"
       "\"frequency\":%u,"
-      "\"count\":%u,"
+      "\"count\":%u,\"observations\":%u,\"encounters\":%u,"
       "\"frame_kind\":\"%s\","
       "\"ssid\":\"%s\"}\n",
       event, (unsigned long)millis(), (unsigned long)d.firstSeen,
       (unsigned long)d.lastSeen, d.method, d.mac, d.method,
       confidenceName(d.confidence), d.mac, oui, d.rssi,
       (unsigned)d.channel, (unsigned)channelFreqMhz(d.channel),
-      (unsigned)d.count, frameKind ? frameKind : "", ssidEsc);
+      (unsigned)d.count, (unsigned)d.count, (unsigned)d.encounters,
+      frameKind ? frameKind : "", ssidEsc);
 }
 
 static void emitUsbStatusJSON() {
   dualPrintf(
       "{\"event\":\"status\",\"schema\":\"flock-you-go.usb.v2\","
-      "\"uptime_ms\":%lu,\"session_detections\":%d,\"scan_mode\":\"%s\","
+      "\"uptime_ms\":%lu,\"session_detections\":%d,\"unique_sensors\":%d,"
+      "\"encounters\":%u,\"scan_mode\":\"%s\","
       "\"channel\":%u,\"scanner_active\":%s,\"queue_drops\":%lu,"
       "\"battery_percent\":%u,\"charging\":%s}\n",
-      (unsigned long)millis(), fyDetCount, channelModeName(), currentChannel,
+      (unsigned long)millis(), fyDetCount, fyDetCount, (unsigned)fyEncounterCount,
+      channelModeName(), currentChannel,
       sniffingStopped ? "false" : "true", (unsigned long)queueDrops,
       batteryReading.percent, batteryReading.charging ? "true" : "false");
 }
@@ -1078,14 +1098,14 @@ static void emitUsbStatusJSON() {
 static void emitUsbSnapshot() {
   if (fySpiffsReady && fyDirty) fySaveSession();
   dualPrintf("{\"event\":\"snapshot_begin\",\"schema\":\"flock-you-go.usb.v2\","
-             "\"uptime_ms\":%lu,\"count\":%d}\n",
-             (unsigned long)millis(), fyDetCount);
+             "\"uptime_ms\":%lu,\"sensors\":%d,\"encounters\":%u}\n",
+             (unsigned long)millis(), fyDetCount, (unsigned)fyEncounterCount);
   for (int i = 0; i < fyDetCount; i++) {
     emitDetectionJSON("snapshot", fyDet[i], "");
   }
   dualPrintf("{\"event\":\"snapshot_end\",\"schema\":\"flock-you-go.usb.v2\","
-             "\"uptime_ms\":%lu,\"count\":%d}\n",
-             (unsigned long)millis(), fyDetCount);
+             "\"uptime_ms\":%lu,\"sensors\":%d,\"encounters\":%u}\n",
+             (unsigned long)millis(), fyDetCount, (unsigned)fyEncounterCount);
 }
 
 static void usbCommandTick() {
@@ -1307,16 +1327,19 @@ static void drainAlertQueue() {
     const char* method = alertTypeToMethod(e.type);
 
     // Always update the on-device detection table (survives reboot via SPIFFS).
-    int idx = fyAddDetection(macStr, method, e.confidence, e.rssi, e.channel,
-                             (e.type == ALERT_SSID) ? e.ssid : nullptr);
+    const DetectionUpdate update = fyAddDetection(
+        macStr, method, e.confidence, e.rssi, e.channel,
+        (e.type == ALERT_SSID) ? e.ssid : nullptr);
+    const int idx = update.index;
 
     // Only corroborated observations drive the physical-alert heartbeat.
     // Update before serial dedupe so repeated medium/high frames keep it alive.
     if (e.confidence >= CONFIDENCE_MEDIUM) fyLastTargetSeen = millis();
     fyLastBogeySeenAt = millis();
 
-    // Serial-rate-limit: suppress emit/beep/flash within ALERT_COOLDOWN_MS.
-    if (shouldSuppressDuplicate(macStr)) continue;
+    // Raw observations are retained silently. Only a new encounter is an
+    // operator alert, and the output gate remains a final burst safeguard.
+    if (!update.encounter || shouldSuppressDuplicate(macStr)) continue;
 
     // Human-readable line (for serial terminal / mirror).
     char oui[9];
@@ -1335,8 +1358,7 @@ static void drainAlertQueue() {
     }
 
     screenWake();
-    aipiDisplayShowDetection(oui, e.rssi, e.channel,
-                             (idx >= 0) ? static_cast<uint16_t>(idx + 1) : 0);
+    aipiDisplayShowDetection(oui, e.rssi, e.channel, fyEncounterCount);
 
     // USB JSON line contains the updated persistent fingerprint record.
     if (idx >= 0) {
@@ -1496,7 +1518,7 @@ void loop() {
   autosaveTick();      // periodic SPIFFS write if dirty
   heartbeatTick();     // audible beep-pair while a target is still in range
   ledTick();           // turn off LED after LED_FLASH_MS
-  aipiDisplayTick(currentChannel, fyDetCount,
+  aipiDisplayTick(currentChannel, fyDetCount, fyEncounterCount,
                   scanMode == SCAN_ALL_CHANNELS, outputVolumePercent,
                   fyLastBogeySeenAt);
   screenSleepTick();

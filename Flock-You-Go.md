@@ -65,11 +65,11 @@ initialization, then enable it only after `DISPON` completes.
 ```cpp
 bool aipiDisplayBegin();
 void aipiDisplaySetBattery(int percent, bool charging);
-void aipiDisplayShowScan(uint8_t channel, int detections, bool allChannels,
+void aipiDisplayShowScan(uint8_t channel, int sensors, int encounters, bool allChannels,
                          uint8_t volumePercent);
 void aipiDisplayShowDetection(const char* oui, int8_t rssi,
                               uint8_t channel, uint16_t count);
-void aipiDisplayTick(uint8_t channel, int detections, bool allChannels,
+void aipiDisplayTick(uint8_t channel, int sensors, int encounters, bool allChannels,
                      uint8_t volumePercent);
 ```
 
@@ -78,13 +78,13 @@ The Wi-Fi receive callback never touches the display. `drainAlertQueue()` calls
 bounded callback behavior. `aipiDisplayTick()` restores the scan view after
 3.5 seconds and skips redraws when channel and count are unchanged.
 
-Distinct MAC identities are displayed and stored as separate signal hits. The
-screen shows the session-wide signal-hit number, and each accepted alert plays
-its rising sound. Packet repeats for the same MAC keep updating the on-device
-record but are rate-limited to one audible/visible alert every five minutes.
-This prevents a stationary sensor from sounding continuously while the operator
-is stopped nearby. USB serial records the ES8311 playback result for each
-accepted alert.
+Distinct MAC identities are displayed as `SENS`, while `ENC` records a first
+sighting or a return after ten minutes out of range. Packet repeats for the
+same MAC update RSSI, last-seen time, and raw observations but do not raise
+either user-facing counter or alert again. This prevents a stationary sensor
+from sounding continuously while the operator is stopped nearby, yet makes a
+sensor encountered on a later drive home a new, audible encounter. USB serial
+records the ES8311 playback result for each encounter.
 
 The scan page reserves its bottom row for battery state. It shows `BAT n%`,
 adds `CHG` while GPIO8 is low, uses red below 10%, gold from 10-49%, and green
@@ -222,7 +222,8 @@ of presenting a false scanning state.
 
 USB detection JSON and CRC-protected SPIFFS session records include the
 `confidence` field alongside the detection method, MAC, OUI, RSSI, channel,
-frequency, count, boot-relative first/last-seen timestamps, and optional SSID.
+frequency, raw `observations`, meaningful `encounters`, boot-relative
+first/last-seen timestamps, and optional SSID.
 Every record has a stable `fingerprint_id` based on its detection method and
 MAC address. USB CDC accepts `DUMP` to save and return the current-session
 table as newline-delimited JSON, `STATUS` for scanner health, and `SAVE` to

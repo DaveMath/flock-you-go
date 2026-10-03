@@ -87,12 +87,14 @@ display rendering, USB output, alerts, and SPIFFS writes happen from `loop()`.
 Each distinct MAC identity is intentionally counted as a separate signal hit.
 A camera installation can expose multiple Wi-Fi/BLE identities, so the first
 three identities observed at a site appear as `SIGNAL HIT` 1, 2, and 3 rather
-than being collapsed into one presumed physical camera. Every accepted alert
-plays the rising detection chirp at the selected volume. Repeated packets from
-the same MAC continue updating their evidence record but remain silent for five
-minutes, preventing a stationary sensor from repeatedly alerting while the
-operator is stopped nearby. USB serial logs whether ES8311 playback succeeded
-for each accepted alert.
+than being collapsed into one presumed physical camera. The panel shows `SENS`
+for distinct fingerprints and `ENC` for meaningful encounters. An encounter is
+a first sighting or a return after ten minutes out of range. Repeated packets
+from the same MAC continue updating their evidence record but do not increase
+either user-facing counter or alert again. This keeps a stationary sensor quiet
+while stopped nearby but produces a fresh alert when it is encountered later on
+the drive home. USB serial logs whether ES8311 playback succeeded for each
+encounter.
 
 Release the right button to cycle alert volume through `MUTE`, `10%`, `50%`,
 and `100%`; nonzero values include the percent sign on-screen and play a sample
@@ -223,7 +225,8 @@ python3 download_log.py --port /dev/cu.usbmodem1301 --output aipi-session.jsonl
 ```
 
 Each record includes `fingerprint_id`, MAC address, OUI, detection method,
-confidence, RSSI, channel, frequency, count, and boot-relative
+confidence, RSSI, channel, frequency, raw `observations`, meaningful
+`encounters`, and boot-relative
 `first_seen_ms`/`last_seen_ms` timestamps. `ssid` is populated only for a
 configured matching SSID fingerprint, which is enabled by default for the
 target keyword list in `main.cpp`; unrelated nearby SSIDs are not archived.
@@ -241,6 +244,7 @@ The main compile-time settings are at the top of `main.cpp`:
 | `RSSI_MIN` | -100 | Medium/high-confidence weak-frame cutoff |
 | `RSSI_LOW_CONFIDENCE_MIN` | -95 | Address-only observation cutoff |
 | `ALERT_COOLDOWN_MS` | 300000 | Per-MAC output rate limit (5 minutes) |
+| `ENCOUNTER_ABSENCE_MS` | 600000 | Absence required before the same fingerprint becomes a new encounter (10 minutes) |
 | `CHECK_ADDR1` | 1 | Receiver-side matching |
 | `CHECK_ADDR3` | 0 | Optional BSSID matching |
 | `MAX_DETECTIONS` | 200 | Local table capacity |
