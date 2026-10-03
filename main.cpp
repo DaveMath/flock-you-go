@@ -37,6 +37,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 #define RIGHT_BUTTON_PIN GPIO_NUM_42
 #define BUTTON_DEBOUNCE_MS 35
 #define SCREEN_TIMEOUT_HOLD_MS 2000
+#define SCREEN_TIMEOUT_CYCLE_MS 3000
 #define BATTERY_POLL_MS 30000
 
 #define HEARTBEAT_MS    30000
@@ -260,6 +261,7 @@ static const uint8_t screenTimeoutMinutes[] = {1, 5, 0};
 static size_t screenTimeoutIndex = 0;
 static unsigned long screenLastActivityAt = 0;
 static unsigned long rightButtonPressedAt = 0;
+static unsigned long rightButtonNextCycleAt = 0;
 static bool rightButtonLongPressApplied = false;
 static bool screenBacklightOn = true;
 
@@ -540,15 +542,29 @@ static void handleButtons() {
   const bool rightPressed = pressedEdge(&rightButton);
   if (rightPressed) {
     rightButtonPressedAt = millis();
+    rightButtonNextCycleAt = 0;
     rightButtonLongPressApplied = false;
     screenWake();
   }
 
+  const unsigned long now = millis();
   if (rightButton.stablePressed && !rightButtonLongPressApplied &&
-      millis() - rightButtonPressedAt >= SCREEN_TIMEOUT_HOLD_MS) {
+      now - rightButtonPressedAt >= SCREEN_TIMEOUT_HOLD_MS) {
     screenTimeoutIndex = (screenTimeoutIndex + 1) %
                          (sizeof(screenTimeoutMinutes) / sizeof(screenTimeoutMinutes[0]));
     rightButtonLongPressApplied = true;
+    rightButtonNextCycleAt = now + SCREEN_TIMEOUT_CYCLE_MS;
+    screenWake();
+    aipiDisplayShowSleepSetting(screenTimeoutMinutes[screenTimeoutIndex]);
+    dualPrintf("[flockyou] screen sleep selection=%s\n",
+               screenTimeoutMinutes[screenTimeoutIndex] ?
+                   (screenTimeoutMinutes[screenTimeoutIndex] == 1 ? "1_min" : "5_min") :
+                   "never");
+  } else if (rightButton.stablePressed && rightButtonLongPressApplied &&
+             static_cast<long>(now - rightButtonNextCycleAt) >= 0) {
+    screenTimeoutIndex = (screenTimeoutIndex + 1) %
+                         (sizeof(screenTimeoutMinutes) / sizeof(screenTimeoutMinutes[0]));
+    rightButtonNextCycleAt = now + SCREEN_TIMEOUT_CYCLE_MS;
     screenWake();
     aipiDisplayShowSleepSetting(screenTimeoutMinutes[screenTimeoutIndex]);
     dualPrintf("[flockyou] screen sleep selection=%s\n",

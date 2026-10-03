@@ -119,9 +119,11 @@ above the live channel number. Battery percentage appears to the right of the
 channel, `LAST SEEN` shows elapsed time since the latest accepted signal, and
 the hit counter remains below it. Release the right button on GPIO42 to cycle
 the alert volume through `MUTE`, `10%`, `50%`, and `100%`; each nonzero setting
-plays a sample immediately. Hold that same button for two seconds to select
-screen sleep `1 MIN`, `5 MIN`, or `NEVER`, then release to save it. Any button
-press or newly accepted signal wakes the display. Both buttons are active-low,
+plays a sample immediately. Bottom labels identify the buttons as `SCAN` and
+`VOL/SCREEN`. Hold the right button for two seconds, then keep holding to cycle
+screen sleep `1 MIN`, `5 MIN`, and `NEVER` every three seconds; release to save
+the displayed selection. Any button press or newly accepted signal wakes the
+display. Both buttons are active-low,
 use internal pull-ups, and have 35 ms software debounce. They are configured
 and read through ESP-IDF `gpio_config()` and `gpio_get_level()` using raw GPIO
 numbers; this avoids Arduino board-variant pin translation. The ES8311 is

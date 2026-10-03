@@ -196,6 +196,8 @@ void renderScan(uint8_t channel, int detections, bool allChannels,
     snprintf(value, sizeof(value), "VOLUME %u%%", volumePercent);
   }
   drawText(13, 101, value, volumePercent ? kWhite : kGold, kBlack, 1);
+  drawText(13, 116, "SCAN", kGray, kBlack, 1);
+  drawText(67, 116, "VOL/SCREEN", kGray, kBlack, 1);
   flush();
   rendered_channel = channel;
   rendered_detections = detections;
