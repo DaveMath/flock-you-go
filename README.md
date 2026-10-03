@@ -1,5 +1,7 @@
 # Flock-You Go
 
+This application is written through the harness [Krystalize.AI](https://Krystalize.AI) - get your Mac M series private local LLM with memory.
+
 Portable, passive 2.4 GHz awareness firmware for the X-Origin AIPI Lite
 ESP32-S3. It watches locally for configured wireless signatures, records
 detections in flash, presents live status on the built-in 128 x 128 display,
@@ -26,7 +28,7 @@ Wi-Fi, USB-C, a WS2812 status LED, and optional battery operation.
 | LCD MOSI | 17 | Implemented |
 | LCD reset | 18 | Implemented |
 | Right button | 42 | Alert volume: mute, 10%, 50%, 100% |
-| Left button | 1 | Toggle 1/6/11 and all-channel scanning |
+| Left button | 1 | Short press: scan mode; 2-second hold: deep-sleep shutdown/wake |
 | Battery voltage | 2 | ADC1, 10-sample average, `2.5` divider multiplier |
 | Charge status | 8 | Active-low input with pull-up |
 | Battery power hold | 10 | Driven high during startup |
@@ -109,6 +111,22 @@ Both buttons are active-low and read by raw ESP-IDF GPIO number with 35 ms
 debounce. Every accepted press forces an immediate scan-screen redraw. The boot
 log prints the initial GPIO1/GPIO42 levels; an idle button should read `1` and a
 pressed button should read `0`.
+
+### Long-press shutdown design
+
+The left control deliberately has two release-safe actions. A short press does
+not change the scan mode until the button is released, so a long hold can never
+accidentally alter the channel plan before shutdown. After two seconds, the
+firmware saves pending session data, disables promiscuous receive, stops Wi-Fi,
+turns off the display backlight, and enters ESP32-S3 deep sleep.
+
+This is a genuine low-power shutdown rather than a screen blank. It stops the
+receiver and avoids continuing to consume battery while the device appears
+off. GPIO1 is configured as the only EXT1 wake source on its active-low level;
+after shutdown, press the left button to boot the firmware again. The next boot
+reinitializes the display, audio codec, passive scanner, and persisted session.
+The existing display-sleep selector on the right button remains a separate
+convenience feature for temporary backlight timeouts.
 
 Battery handling follows WalkieClaw's native hardware model. GPIO10 is asserted
 at startup so the device remains powered from the battery module. GPIO2 is read

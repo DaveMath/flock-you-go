@@ -1,5 +1,7 @@
 # AIPI Lite Display Integration
 
+This application is written through the harness [Krystalize.AI](https://Krystalize.AI) - get your Mac M series private local LLM with memory.
+
 This document records the hardware-specific display and passive Wi-Fi receiver
 configuration used by Flock-You Go. The canonical project overview and build
 instructions live in [`README.md`](README.md).
@@ -132,6 +134,19 @@ and read through ESP-IDF `gpio_config()` and `gpio_get_level()` using raw GPIO
 numbers; this avoids Arduino board-variant pin translation. The ES8311 is
 controlled over GPIO4/GPIO5, receives 16 kHz I2S on GPIO14/GPIO12/GPIO11, and
 uses GPIO9 to enable the speaker amplifier only during playback.
+
+### Long-press shutdown design
+
+The left button action is deferred until release so short `SCAN/OFF` presses
+continue to change only the scan plan. A two-second hold instead saves any
+pending detection session, disables passive promiscuous receive, stops Wi-Fi,
+turns the backlight off, and starts ESP32-S3 deep sleep. The device is actually
+powered down at the CPU/radio level rather than merely showing a black screen.
+
+GPIO1 is configured as the active-low EXT1 wake source. Press it after shutdown
+to restart the normal initialization sequence, including the panel, ES8311,
+scanner, and saved session. The right-button `VOL/SCREEN` long press remains
+independent because its job is only to select a temporary display-sleep timeout.
 
 At boot, USB serial reports the initial electrical levels for GPIO1 and GPIO42.
 An unpressed active-low button should report level `1`; pressing it should take
