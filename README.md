@@ -99,7 +99,7 @@ counted as a signal. Selecting mute produces no sound.
 The bottom labels are `SCAN` above the left button and `VOL/SCREEN` above the
 right button. Hold the right button for two seconds to enter the display-sleep
 selector. While held, it advances through `1 MIN`, `5 MIN`, and `NEVER` every
-three seconds; release to save the setting currently shown. Any button press or
+two seconds; release to save the setting currently shown. Any button press or
 newly accepted signal wakes the display.
 
 Both buttons are active-low and read by raw ESP-IDF GPIO number with 35 ms

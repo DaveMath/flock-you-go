@@ -37,7 +37,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 #define RIGHT_BUTTON_PIN GPIO_NUM_42
 #define BUTTON_DEBOUNCE_MS 35
 #define SCREEN_TIMEOUT_HOLD_MS 2000
-#define SCREEN_TIMEOUT_CYCLE_MS 3000
+#define SCREEN_TIMEOUT_CYCLE_MS 2000
 #define BATTERY_POLL_MS 30000
 
 #define HEARTBEAT_MS    30000
