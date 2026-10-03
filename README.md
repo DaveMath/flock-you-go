@@ -201,6 +201,32 @@ prefixes are not sufficient evidence of a Flock device and are deliberately
 excluded from local alerts. A configured Flock SSID remains an independent
 corroborating signal.
 
+### Community MAC tables
+
+The default table is intentionally conservative. It is generated from
+[`datasets/flock_oui_table.csv`](datasets/flock_oui_table.csv), a reviewed list
+of 24-bit OUI prefixes, not a collection of individual device MAC addresses.
+That keeps the shared table auditable and avoids collecting device-specific
+identifiers.
+
+To build a local table, copy the CSV, add one prefix per row with its evidence
+and source, then generate the firmware header and build:
+
+```bash
+cp datasets/flock_oui_table.csv datasets/my_oui_table.csv
+# Edit datasets/my_oui_table.csv and set enabled to 1 only for reviewed rows.
+python3 tools/build_oui_table.py --input datasets/my_oui_table.csv --output generated_oui_table.h
+pio run
+```
+
+`generated_oui_table.h` is the exact table compiled into the firmware. A local
+table can include field evidence for a research or lab deployment, but it loses
+the default table's direct-allocation guarantee. To contribute a shared prefix,
+open a GitHub pull request with the CSV row, its source, date and location at a
+coarse level, plus independent corroboration such as a Flock-pattern SSID or a
+wildcard-probe capture. Do not submit full device MAC addresses or personal
+location history.
+
 The firmware does not join a Wi-Fi network, create an access point, interfere
 with traffic, or upload detection data.
 

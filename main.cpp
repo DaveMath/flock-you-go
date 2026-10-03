@@ -12,6 +12,7 @@
 #include "aipi_audio.h"
 #include "aipi_battery.h"
 #include "aipi_display.h"
+#include "generated_oui_table.h"
 
 // ============================================================
 // CONFIG
@@ -84,21 +85,9 @@ static const size_t SSID_KEYWORD_COUNT = sizeof(target_ssid_keywords) / sizeof(t
 #define AUTOSAVE_INTERVAL_MS 60000
 #define USER_SETTINGS_NAMESPACE "flock_you_go"
 
-// ============================================================
-// DIRECT FLOCK SAFETY OUI LIST  (all lowercase, colons only)
-// ============================================================
-
-// B4:1E:52 is assigned directly to Flock Safety by the IEEE. Shared radio and
-// contract-manufacturer prefixes are intentionally excluded: an OUI alone does
-// not identify the brand of the finished device.
-static const char* target_ouis[] = {
-  "b4:1e:52",
-};
-static const size_t OUI_COUNT = sizeof(target_ouis) / sizeof(target_ouis[0]);
-
 // Pre-compiled byte table — populated once in setup(), never touched again.
 // Keeps matchOuiRaw entirely in IRAM with no flash-resident function calls.
-static uint8_t oui_bytes[OUI_COUNT][3];
+static uint8_t oui_bytes[kTargetOuiCount][3];
 
 // ============================================================
 // ALERT QUEUE  (callback → loop, avoids Serial in WiFi task)
@@ -364,8 +353,8 @@ static void ouiFromMac(const uint8_t* mac, char* buf, size_t len) {
 }
 
 static void precompileOuis() {
-  for (size_t i = 0; i < OUI_COUNT; i++) {
-    const char* o  = target_ouis[i];
+  for (size_t i = 0; i < kTargetOuiCount; i++) {
+    const char* o  = kTargetOuis[i];
     oui_bytes[i][0] = (uint8_t)strtol(o,     nullptr, 16);
     oui_bytes[i][1] = (uint8_t)strtol(o + 3, nullptr, 16);
     oui_bytes[i][2] = (uint8_t)strtol(o + 6, nullptr, 16);
@@ -383,7 +372,7 @@ static bool IRAM_ATTR matchOuiRaw(const uint8_t* mac) {
   // Fixed infrastructure devices never use them — skip immediately.
   if (mac[0] & 0x02) return false;
 
-  for (size_t i = 0; i < OUI_COUNT; i++) {
+  for (size_t i = 0; i < kTargetOuiCount; i++) {
     if (mac[0] == oui_bytes[i][0] &&
         mac[1] == oui_bytes[i][1] &&
         mac[2] == oui_bytes[i][2]) return true;
