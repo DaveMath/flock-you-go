@@ -5,6 +5,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 #include <ctype.h>
 #include <string.h>
 #include <SPIFFS.h>
@@ -294,7 +295,9 @@ typedef struct __attribute__((packed)) {
 // ============================================================
 
 // Dual-output: prints to both Serial (USB) and Serial1 (GPIO43)
-static char _dualBuf[384];
+// USB snapshot records can include an escaped 32-byte SSID and exceed the
+// short diagnostic-line buffer used by early builds.
+static char _dualBuf[768];
 
 static void dualPrintf(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
 static void dualPrintf(const char* fmt, ...) {
@@ -303,9 +306,10 @@ static void dualPrintf(const char* fmt, ...) {
   int n = vsnprintf(_dualBuf, sizeof(_dualBuf), fmt, args);
   va_end(args);
   if (n > 0) {
-    Serial.write(_dualBuf, n);
+    const size_t length = min(static_cast<size_t>(n), sizeof(_dualBuf) - 1);
+    Serial.write(_dualBuf, length);
 #if MIRROR_SERIAL
-    Serial1.write(_dualBuf, n);
+    Serial1.write(_dualBuf, length);
 #endif
   }
 }
@@ -509,6 +513,7 @@ static bool buttonIsPressed(const ButtonState* button) {
 static void initButtons() {
   // Clear any configuration inherited from boot/JTAG before assigning these
   // pads to the two active-low AiPi buttons.
+  rtc_gpio_deinit(LEFT_BUTTON_PIN);
   gpio_reset_pin(LEFT_BUTTON_PIN);
   gpio_reset_pin(RIGHT_BUTTON_PIN);
 
@@ -590,6 +595,26 @@ static void shutdownToDeepSleep() {
   wifiOk(esp_wifi_stop(), "shutdown_wifi");
   aipiDisplaySetBacklight(false);
   screenBacklightOn = false;
+
+  // GPIO1 must be owned by the RTC domain during deep sleep. The normal GPIO
+  // pull-up used while running is not retained reliably after the CPU sleeps.
+  esp_err_t wakePinResult = rtc_gpio_init(LEFT_BUTTON_PIN);
+  if (wakePinResult == ESP_OK) {
+    wakePinResult = rtc_gpio_set_direction(LEFT_BUTTON_PIN, RTC_GPIO_MODE_INPUT_ONLY);
+  }
+  if (wakePinResult == ESP_OK) {
+    wakePinResult = rtc_gpio_pullup_en(LEFT_BUTTON_PIN);
+  }
+  if (wakePinResult == ESP_OK) {
+    wakePinResult = rtc_gpio_pulldown_dis(LEFT_BUTTON_PIN);
+  }
+  if (wakePinResult != ESP_OK) {
+    dualPrintf("[flockyou] RTC wake pin setup failed: %s (0x%x)\n",
+               esp_err_to_name(wakePinResult), static_cast<unsigned>(wakePinResult));
+    initButtons();
+    return;
+  }
+  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
 
   const uint64_t wakeMask = 1ULL << LEFT_BUTTON_PIN;
   const esp_err_t wakeResult = esp_sleep_enable_ext1_wakeup(
@@ -1193,15 +1218,23 @@ static void emitUsbStatusJSON() {
 
 static void emitUsbSnapshot() {
   if (fySpiffsReady && fyDirty) fySaveSession();
+  // Regular logs must never stall a USB-optional device, but a requested dump
+  // is an explicit export transaction. Allow the CDC TX queue to drain after
+  // each record so JSON framing stays intact.
+  Serial.setTxTimeoutMs(100);
   dualPrintf("{\"event\":\"snapshot_begin\",\"schema\":\"flock-you-go.usb.v2\","
              "\"uptime_ms\":%lu,\"sensors\":%d,\"encounters\":%u}\n",
              (unsigned long)millis(), fyDetCount, (unsigned)fyEncounterCount);
+  Serial.flush();
   for (int i = 0; i < fyDetCount; i++) {
     emitDetectionJSON("snapshot", fyDet[i], "");
+    Serial.flush();
   }
   dualPrintf("{\"event\":\"snapshot_end\",\"schema\":\"flock-you-go.usb.v2\","
              "\"uptime_ms\":%lu,\"sensors\":%d,\"encounters\":%u}\n",
              (unsigned long)millis(), fyDetCount, (unsigned)fyEncounterCount);
+  Serial.flush();
+  Serial.setTxTimeoutMs(0);
 }
 
 static void usbCommandTick() {
