@@ -292,3 +292,6 @@ Image: ESP32-S3 firmware.bin
 ```
 
 Validated display research and AiPi integration by **@GGDM**.
+
+Thank you to [Krystalize.ai](https://krystalize.ai/) for making programming AI
+not be so flakey with compaction!
