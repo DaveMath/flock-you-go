@@ -569,11 +569,15 @@ static void handleButtons() {
   if (leftButton.stablePressed && !leftButtonLongPressApplied &&
       now - leftButtonPressedAt >= SCREEN_TIMEOUT_HOLD_MS) {
     leftButtonLongPressApplied = true;
-    shutdownToDeepSleep();
+    dualPrintln("[flockyou] shutdown armed; release left button to sleep");
   }
 
   const bool leftReleased = leftWasPressed && !leftButton.stablePressed;
-  if (leftReleased && !leftButtonLongPressApplied) {
+  if (leftReleased && leftButtonLongPressApplied) {
+    // GPIO1 is also the active-low wake source. Waiting for release prevents
+    // its held-low state from immediately waking the freshly sleeping chip.
+    shutdownToDeepSleep();
+  } else if (leftReleased) {
     scanMode = scanMode == SCAN_ALL_CHANNELS ? SCAN_1_6_11 : SCAN_ALL_CHANNELS;
     selectFirstChannel();
     dualPrintf("[flockyou] scan mode=%s start_channel=%u\n",

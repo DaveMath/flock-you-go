@@ -100,8 +100,9 @@ counted as a signal. Selecting mute produces no sound.
 
 The bottom labels are `SCAN/OFF` above the left button and `VOL/SCREEN` above
 the right button. Release the left button after a short press to switch the
-scan plan. Hold it for two seconds to save state, stop passive receive, and
-shut the ESP32-S3 down into deep sleep. Press the left button again to wake it.
+scan plan. Hold it for two seconds, then release it to save state, stop passive
+receive, and shut the ESP32-S3 down into deep sleep. Press the left button
+again to wake it.
 Hold the right button for two seconds to enter the display-sleep
 selector. While held, it advances through `1 MIN`, `5 MIN`, and `NEVER` every
 two seconds; release to save the setting currently shown. Any button press or
@@ -116,14 +117,15 @@ pressed button should read `0`.
 
 The left control deliberately has two release-safe actions. A short press does
 not change the scan mode until the button is released, so a long hold can never
-accidentally alter the channel plan before shutdown. After two seconds, the
-firmware saves pending session data, disables promiscuous receive, stops Wi-Fi,
-turns off the display backlight, and enters ESP32-S3 deep sleep.
+accidentally alter the channel plan before shutdown. After two seconds, release
+the button to save pending session data, disable promiscuous receive, stop
+Wi-Fi, turn off the display backlight, and enter ESP32-S3 deep sleep.
 
 This is a genuine low-power shutdown rather than a screen blank. It stops the
 receiver and avoids continuing to consume battery while the device appears
 off. GPIO1 is configured as the only EXT1 wake source on its active-low level;
-after shutdown, press the left button to boot the firmware again. The next boot
+waiting for release prevents the shutdown hold from immediately waking it.
+After shutdown, press the left button to boot the firmware again. The next boot
 reinitializes the display, audio codec, passive scanner, and persisted session.
 The existing display-sleep selector on the right button remains a separate
 convenience feature for temporary backlight timeouts.

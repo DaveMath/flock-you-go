@@ -123,9 +123,9 @@ the hit counter remains below it. Release the right button on GPIO42 to cycle
 the alert volume through `MUTE`, `10%`, `50%`, and `100%`; each nonzero setting
 plays a sample immediately. Bottom labels identify the buttons as `SCAN/OFF`
 and `VOL/SCREEN`. Release a short left-button press to change the scan plan;
-hold the left button for two seconds to save state, stop passive receive, and
-put the ESP32-S3 into deep sleep. Press the left button again to wake it. Hold
-the right button for two seconds, then keep holding to cycle
+hold it for two seconds, then release it to save state, stop passive receive,
+and put the ESP32-S3 into deep sleep. Press the left button again to wake it.
+Hold the right button for two seconds, then keep holding to cycle
 screen sleep `1 MIN`, `5 MIN`, and `NEVER` every two seconds; release to save
 the displayed selection. Any button press or newly accepted signal wakes the
 display. Both buttons are active-low,
@@ -139,13 +139,16 @@ uses GPIO9 to enable the speaker amplifier only during playback.
 
 The left button action is deferred until release so short `SCAN/OFF` presses
 continue to change only the scan plan. A two-second hold instead saves any
-pending detection session, disables passive promiscuous receive, stops Wi-Fi,
-turns the backlight off, and starts ESP32-S3 deep sleep. The device is actually
-powered down at the CPU/radio level rather than merely showing a black screen.
+pending detection session only after the button is released, then disables
+passive promiscuous receive, stops Wi-Fi, turns the backlight off, and starts
+ESP32-S3 deep sleep. The device is actually powered down at the CPU/radio level
+rather than merely showing a black screen.
 
 GPIO1 is configured as the active-low EXT1 wake source. Press it after shutdown
 to restart the normal initialization sequence, including the panel, ES8311,
-scanner, and saved session. The right-button `VOL/SCREEN` long press remains
+scanner, and saved session. Waiting for release is necessary because holding an
+active-low wake pin during sleep would otherwise immediately wake the device.
+The right-button `VOL/SCREEN` long press remains
 independent because its job is only to select a temporary display-sleep timeout.
 
 At boot, USB serial reports the initial electrical levels for GPIO1 and GPIO42.
