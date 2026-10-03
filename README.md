@@ -96,8 +96,10 @@ immediately. The detection chirp uses the selected nonzero volume for every
 new MAC identity, including a receiver-side observation that the scanner has
 counted as a signal. Selecting mute produces no sound.
 
-The bottom labels are `SCAN` above the left button and `VOL/SCREEN` above the
-right button. Hold the right button for two seconds to enter the display-sleep
+The bottom labels are `SCAN/OFF` above the left button and `VOL/SCREEN` above
+the right button. Release the left button after a short press to switch the
+scan plan. Hold it for two seconds to turn the display off without changing the
+scan plan. Hold the right button for two seconds to enter the display-sleep
 selector. While held, it advances through `1 MIN`, `5 MIN`, and `NEVER` every
 two seconds; release to save the setting currently shown. Any button press or
 newly accepted signal wakes the display.

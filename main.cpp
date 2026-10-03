@@ -260,8 +260,10 @@ static unsigned long fyLastBogeySeenAt = 0;
 static const uint8_t screenTimeoutMinutes[] = {1, 5, 0};
 static size_t screenTimeoutIndex = 0;
 static unsigned long screenLastActivityAt = 0;
+static unsigned long leftButtonPressedAt = 0;
 static unsigned long rightButtonPressedAt = 0;
 static unsigned long rightButtonNextCycleAt = 0;
+static bool leftButtonLongPressApplied = false;
 static bool rightButtonLongPressApplied = false;
 static bool screenBacklightOn = true;
 
@@ -529,7 +531,25 @@ static void screenSleepTick() {
 static void handleButtons() {
   bool displayChanged = false;
   bool playVolumeSample = false;
-  if (pressedEdge(&leftButton)) {
+  const bool leftWasPressed = leftButton.stablePressed;
+  const bool leftPressed = pressedEdge(&leftButton);
+  if (leftPressed) {
+    leftButtonPressedAt = millis();
+    leftButtonLongPressApplied = false;
+    screenWake();
+  }
+
+  const unsigned long now = millis();
+  if (leftButton.stablePressed && !leftButtonLongPressApplied &&
+      now - leftButtonPressedAt >= SCREEN_TIMEOUT_HOLD_MS) {
+    aipiDisplaySetBacklight(false);
+    screenBacklightOn = false;
+    leftButtonLongPressApplied = true;
+    dualPrintln("[flockyou] display off by left-button long press");
+  }
+
+  const bool leftReleased = leftWasPressed && !leftButton.stablePressed;
+  if (leftReleased && !leftButtonLongPressApplied) {
     scanMode = scanMode == SCAN_ALL_CHANNELS ? SCAN_1_6_11 : SCAN_ALL_CHANNELS;
     selectFirstChannel();
     dualPrintf("[flockyou] scan mode=%s start_channel=%u\n",
@@ -547,7 +567,6 @@ static void handleButtons() {
     screenWake();
   }
 
-  const unsigned long now = millis();
   if (rightButton.stablePressed && !rightButtonLongPressApplied &&
       now - rightButtonPressedAt >= SCREEN_TIMEOUT_HOLD_MS) {
     screenTimeoutIndex = (screenTimeoutIndex + 1) %
