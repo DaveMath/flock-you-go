@@ -211,6 +211,25 @@ toolchain definition while overriding the physical flash size to 16 MB.
 Flashing must identify the chip as `ESP32-S3`; an `esp32` esptool target is
 incorrect.
 
+### Reliable USB upload
+
+The project deliberately uses a conservative `upload_speed = 115200`. The
+AiPi's ESP32-S3 bootloader was verified at that speed. A 921600 baud upload
+can connect, upload the stub, and then lose the serial link during its speed
+change with `No serial data received`.
+
+If PlatformIO reports that `/dev/cu.usbmodem1301` does not exist, reconnect
+the board or hold **Boot** while tapping **Reset**, then confirm the current
+port before retrying:
+
+```bash
+ls /dev/cu.*
+pio run -t upload --upload-port /dev/cu.usbmodem1301
+```
+
+The USB fingerprint downloader is separate from firmware flashing: it uses
+the running firmware's 115200-baud CDC serial stream after a successful upload.
+
 Press `Ctrl-C` to leave the serial monitor.
 
 ## USB dashboard
