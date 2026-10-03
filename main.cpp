@@ -64,7 +64,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 #define HB_BEEP_NOTE_MS        70
 #define HB_BEEP_GAP_MS         70
 
-#define ENABLE_SSID_MATCH 0
+#define ENABLE_SSID_MATCH 1
 #define CHECK_ADDR1 1   // dst/rx — catches Flock STAs receiving probe responses
 #define CHECK_ADDR3 0   // bssid fallback for randomised addr2
 static const char* target_ssid_keywords[] = { "flock" };
@@ -1043,30 +1043,33 @@ static void fyPromotePrevSession() {
 }
 
 // ============================================================
-// FLASK-COMPATIBLE JSON EMISSION
+// USB JSON EXPORT
 // ============================================================
 //
-// The Flask app (flock-you/api/flockyou.py) reads one JSON object per line
-// from the USB CDC serial port. It filters by presence of `detection_method`
-// and extracts these fields:  mac_address, rssi, channel, frequency, ssid,
-// device_name, gps.latitude, gps.longitude, gps.accuracy.
+// The dashboard and a terminal-connected computer read one JSON object per
+// line from USB CDC. Each record retains the radio fingerprint and its latest
+// on-device state; commands below export the whole current session on demand.
 //
 // GPS is handled Flask-side via its own USB NMEA puck or browser geolocation;
 // we don't embed GPS here because there's no on-device AP / phone link.
 
-static void emitDetectionJSON(const char* mac, const char* method,
-                              DetectionConfidence confidence,
-                              int8_t rssi, uint8_t ch, const char* ssid) {
-  char ssidEsc[sizeof(((FYDetection*)0)->ssid) * 6 + 1];
-  jsonEscape(ssidEsc, sizeof(ssidEsc), ssid ? ssid : "");
+static void emitDetectionJSON(const char* event, const FYDetection& d,
+                              const char* frameKind) {
+  char ssidEsc[sizeof(d.ssid) * 6 + 1];
+  jsonEscape(ssidEsc, sizeof(ssidEsc), d.ssid);
   char oui[9];
   uint8_t mbytes[6] = {0};
-  sscanf(mac, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+  sscanf(d.mac, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
          &mbytes[0], &mbytes[1], &mbytes[2], &mbytes[3], &mbytes[4], &mbytes[5]);
   ouiFromMac(mbytes, oui, sizeof(oui));
 
   dualPrintf(
-      "{\"event\":\"detection\","
+      "{\"event\":\"%s\","
+      "\"schema\":\"flock-you-go.usb.v2\","
+      "\"uptime_ms\":%lu,"
+      "\"first_seen_ms\":%lu,"
+      "\"last_seen_ms\":%lu,"
+      "\"fingerprint_id\":\"wifi_%s:%s\","
       "\"detection_method\":\"wifi_%s\","
       "\"confidence\":\"%s\","
       "\"protocol\":\"wifi_2_4ghz\","
@@ -1076,9 +1079,68 @@ static void emitDetectionJSON(const char* mac, const char* method,
       "\"rssi\":%d,"
       "\"channel\":%u,"
       "\"frequency\":%u,"
+      "\"count\":%u,"
+      "\"frame_kind\":\"%s\","
       "\"ssid\":\"%s\"}\n",
-      method, confidenceName(confidence), mac, oui, rssi,
-      (unsigned)ch, (unsigned)channelFreqMhz(ch), ssidEsc);
+      event, (unsigned long)millis(), (unsigned long)d.firstSeen,
+      (unsigned long)d.lastSeen, d.method, d.mac, d.method,
+      confidenceName(d.confidence), d.mac, oui, d.rssi,
+      (unsigned)d.channel, (unsigned)channelFreqMhz(d.channel),
+      (unsigned)d.count, frameKind ? frameKind : "", ssidEsc);
+}
+
+static void emitUsbStatusJSON() {
+  dualPrintf(
+      "{\"event\":\"status\",\"schema\":\"flock-you-go.usb.v2\","
+      "\"uptime_ms\":%lu,\"session_detections\":%d,\"scan_mode\":\"%s\","
+      "\"channel\":%u,\"scanner_active\":%s,\"queue_drops\":%lu,"
+      "\"battery_percent\":%u,\"charging\":%s}\n",
+      (unsigned long)millis(), fyDetCount, channelModeName(), currentChannel,
+      sniffingStopped ? "false" : "true", (unsigned long)queueDrops,
+      batteryReading.percent, batteryReading.charging ? "true" : "false");
+}
+
+static void emitUsbSnapshot() {
+  if (fySpiffsReady && fyDirty) fySaveSession();
+  dualPrintf("{\"event\":\"snapshot_begin\",\"schema\":\"flock-you-go.usb.v2\","
+             "\"uptime_ms\":%lu,\"count\":%d}\n",
+             (unsigned long)millis(), fyDetCount);
+  for (int i = 0; i < fyDetCount; i++) {
+    emitDetectionJSON("snapshot", fyDet[i], "");
+  }
+  dualPrintf("{\"event\":\"snapshot_end\",\"schema\":\"flock-you-go.usb.v2\","
+             "\"uptime_ms\":%lu,\"count\":%d}\n",
+             (unsigned long)millis(), fyDetCount);
+}
+
+static void usbCommandTick() {
+  static char command[16] = {};
+  static size_t length = 0;
+  while (Serial.available() > 0) {
+    const char c = static_cast<char>(Serial.read());
+    if (c == '\r') continue;
+    if (c == '\n') {
+      command[length] = '\0';
+      for (size_t i = 0; i < length; i++) command[i] = toupper(command[i]);
+      if (strcmp(command, "DUMP") == 0) {
+        emitUsbSnapshot();
+      } else if (strcmp(command, "STATUS") == 0) {
+        emitUsbStatusJSON();
+      } else if (strcmp(command, "SAVE") == 0) {
+        fySaveSession();
+        dualPrintln("{\"event\":\"save_complete\",\"schema\":\"flock-you-go.usb.v2\"}");
+      } else if (strcmp(command, "HELP") == 0) {
+        dualPrintln("[flockyou] USB commands: DUMP, STATUS, SAVE, HELP");
+      } else if (length != 0) {
+        dualPrintln("[flockyou] unknown USB command; send HELP");
+      }
+      length = 0;
+      continue;
+    }
+    if (length + 1 < sizeof(command) && c >= 0x20 && c <= 0x7e) {
+      command[length++] = c;
+    }
+  }
 }
 
 // ============================================================
@@ -1305,9 +1367,10 @@ static void drainAlertQueue() {
     aipiDisplayShowDetection(oui, e.rssi, e.channel,
                              (idx >= 0) ? static_cast<uint16_t>(idx + 1) : 0);
 
-    // Flask-compatible JSON line (parsed by api/flockyou.py over USB CDC).
-    emitDetectionJSON(macStr, method, e.confidence, e.rssi, e.channel,
-                      (e.type == ALERT_SSID) ? e.ssid : "");
+    // USB JSON line contains the updated persistent fingerprint record.
+    if (idx >= 0) {
+      emitDetectionJSON("detection", fyDet[idx], e.frameKind);
+    }
 
     // Audio feedback:
     //   - NEW SIGNAL IDENTITY → two fast ascending beeps for each MAC
@@ -1452,6 +1515,7 @@ void setup() {
 }
 
 void loop() {
+  usbCommandTick();
   handleButtons();
   updateBattery();
   updateChannelMode();

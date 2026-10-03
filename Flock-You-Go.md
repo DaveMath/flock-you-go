@@ -220,7 +220,14 @@ of presenting a false scanning state.
 
 USB detection JSON and CRC-protected SPIFFS session records include the
 `confidence` field alongside the detection method, MAC, OUI, RSSI, channel,
-frequency, and optional SSID.
+frequency, count, boot-relative first/last-seen timestamps, and optional SSID.
+Every record has a stable `fingerprint_id` based on its detection method and
+MAC address. USB CDC accepts `DUMP` to save and return the current-session
+table as newline-delimited JSON, `STATUS` for scanner health, and `SAVE` to
+persist immediately. `api/download_log.py` requests a snapshot and saves it
+directly on a connected computer. SSID values are retained only when a
+configured target keyword matches, avoiding collection of unrelated nearby
+network names.
 
 ## Hardware conflicts removed
 

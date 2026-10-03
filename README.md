@@ -199,6 +199,33 @@ python3 flockyou.py
 Open `http://localhost:5000` and select the AiPi serial port. GPS enrichment is
 performed by the local dashboard or phone browser, not by a cloud service.
 
+### USB fingerprint export
+
+Connect the AiPi to a computer by USB-C at 115200 baud. The firmware emits
+newline-delimited JSON for live observations and accepts these USB commands:
+
+| Command | Result |
+|---|---|
+| `DUMP` | Saves pending state and emits the complete current-session fingerprint table between `snapshot_begin` and `snapshot_end` records. |
+| `STATUS` | Emits current scanner, channel, battery, and queue health as JSON. |
+| `SAVE` | Immediately writes the current session to SPIFFS. |
+| `HELP` | Prints the command list. |
+
+The included downloader requests a `DUMP` and writes one JSON fingerprint per
+line to the computer:
+
+```bash
+cd api
+python3 -m pip install -r requirements.txt
+python3 download_log.py --port /dev/cu.usbmodem1301 --output aipi-session.jsonl
+```
+
+Each record includes `fingerprint_id`, MAC address, OUI, detection method,
+confidence, RSSI, channel, frequency, count, and boot-relative
+`first_seen_ms`/`last_seen_ms` timestamps. `ssid` is populated only for a
+configured matching SSID fingerprint, which is enabled by default for the
+target keyword list in `main.cpp`; unrelated nearby SSIDs are not archived.
+
 ## Configuration
 
 The main compile-time settings are at the top of `main.cpp`:
