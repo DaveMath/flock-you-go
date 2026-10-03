@@ -232,6 +232,18 @@ the running firmware's 115200-baud CDC serial stream after a successful upload.
 
 Press `Ctrl-C` to leave the serial monitor.
 
+## Power-user USB console
+
+Flock-You-Go is fully usable without a computer, but its USB-C connection is a
+deliberate local maintenance console for power users. Plugging it into a laptop
+provides live diagnostics and structured session export without joining Wi-Fi,
+creating an access point, or sending detection data to a cloud service.
+
+Use it to inspect scanner and battery health, preserve a session before
+shutdown, export records for local analysis, or diagnose field behavior. The
+firmware continues passive receive while connected; USB is an optional local
+tool, not an operating requirement.
+
 ## USB dashboard
 
 The optional local dashboard ingests the firmware's JSON stream:
