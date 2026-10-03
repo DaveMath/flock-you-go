@@ -102,6 +102,18 @@ immediately. The detection chirp uses the selected nonzero volume for every
 accepted alert, including a receiver-side observation that the scanner has
 counted as a signal. Selecting mute produces no sound.
 
+## Persistent User Settings
+
+Flock-You-Go uses ESP-IDF NVS namespace `flock_you_go` for user preferences.
+The selected scan plan, alert-volume step, and display-sleep timeout are loaded
+before the passive receiver starts and saved only after a completed button
+action. NVS writes never occur while a button is merely held.
+
+Detection history is separate: it remains in SPIFFS as CRC-protected session
+records. NVS stores small configuration values; SPIFFS stores field data. The
+firmware keeps Wi-Fi driver storage in RAM and never joins a network, performs
+an active scan, or sends probe traffic.
+
 The bottom labels are `SCAN/OFF` above the left button and `VOL/SCREEN` above
 the right button. Release the left button before three seconds to switch the
 scan plan. Holding it past three seconds begins the separate `3`, `2`, `1`,

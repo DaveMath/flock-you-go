@@ -140,6 +140,17 @@ numbers; this avoids Arduino board-variant pin translation. The ES8311 is
 controlled over GPIO4/GPIO5, receives 16 kHz I2S on GPIO14/GPIO12/GPIO11, and
 uses GPIO9 to enable the speaker amplifier only during playback.
 
+## NVS user preferences
+
+The Arduino application uses ESP-IDF NVS directly, in namespace
+`flock_you_go`, for scan-plan selection, volume index, and screen-timeout
+selection. Settings load before the receiver starts and commit only after a
+completed left short press, right short press, or right long-press release.
+The radio's own Wi-Fi storage remains RAM-only and passive-only.
+
+This is intentionally separate from SPIFFS. NVS holds small user preferences;
+SPIFFS holds CRC-protected detection-session records and USB-export data.
+
 ### Long-press shutdown design
 
 The left button action is deferred until release so short `SCAN/OFF` presses

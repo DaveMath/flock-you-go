@@ -2,6 +2,8 @@
 #include "esp_wifi.h"
 #include "esp_err.h"
 #include "esp_sleep.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "driver/gpio.h"
 #include <ctype.h>
 #include <string.h>
@@ -79,6 +81,7 @@ static const size_t SSID_KEYWORD_COUNT = sizeof(target_ssid_keywords) / sizeof(t
 #define FY_SESSION_TMP       "/session.tmp"
 #define FY_PREV_FILE         "/prev_session.json"
 #define AUTOSAVE_INTERVAL_MS 60000
+#define USER_SETTINGS_NAMESPACE "flock_you_go"
 
 // ============================================================
 // TARGET OUI LIST  (all lowercase, colons only)
@@ -269,6 +272,7 @@ static bool leftButtonLongPressApplied = false;
 static bool leftShutdownCountdownActive = false;
 static bool rightButtonLongPressApplied = false;
 static bool screenBacklightOn = true;
+static bool userSettingsReady = false;
 
 // ============================================================
 // 802.11 HEADER
@@ -447,6 +451,55 @@ static void selectFirstChannel() {
   lastHop = millis();
 }
 
+static void saveUserSettings() {
+  if (!userSettingsReady) return;
+  nvs_handle_t handle = 0;
+  esp_err_t err = nvs_open(USER_SETTINGS_NAMESPACE, NVS_READWRITE, &handle);
+  if (err == ESP_OK) err = nvs_set_u8(handle, "scan_mode", static_cast<uint8_t>(scanMode));
+  if (err == ESP_OK) err = nvs_set_u8(handle, "volume_idx", static_cast<uint8_t>(volumeIndex));
+  if (err == ESP_OK) err = nvs_set_u8(handle, "sleep_idx", static_cast<uint8_t>(screenTimeoutIndex));
+  if (err == ESP_OK) err = nvs_commit(handle);
+  if (handle != 0) nvs_close(handle);
+  if (err != ESP_OK) {
+    dualPrintf("[flockyou] NVS settings save failed: %s (0x%x)\n",
+               esp_err_to_name(err), static_cast<unsigned>(err));
+  }
+}
+
+static void loadUserSettings() {
+  esp_err_t result = nvs_flash_init();
+  if (result == ESP_ERR_NVS_NO_FREE_PAGES || result == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    result = nvs_flash_erase();
+    if (result == ESP_OK) result = nvs_flash_init();
+  }
+  if (result != ESP_OK) {
+    dualPrintf("[flockyou] NVS init failed: %s (0x%x); using defaults\n",
+               esp_err_to_name(result), static_cast<unsigned>(result));
+    return;
+  }
+
+  userSettingsReady = true;
+  nvs_handle_t handle = 0;
+  if (nvs_open(USER_SETTINGS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) return;
+
+  uint8_t value = 0;
+  if (nvs_get_u8(handle, "scan_mode", &value) == ESP_OK && value <= SCAN_ALL_CHANNELS) {
+    scanMode = static_cast<ScanMode>(value);
+  }
+  if (nvs_get_u8(handle, "volume_idx", &value) == ESP_OK &&
+      value < sizeof(volumeLevels) / sizeof(volumeLevels[0])) {
+    volumeIndex = value;
+    outputVolumePercent = volumeLevels[volumeIndex];
+  }
+  if (nvs_get_u8(handle, "sleep_idx", &value) == ESP_OK &&
+      value < sizeof(screenTimeoutMinutes) / sizeof(screenTimeoutMinutes[0])) {
+    screenTimeoutIndex = value;
+  }
+  nvs_close(handle);
+  dualPrintf("[flockyou] NVS settings mode=%s volume=%u%% sleep=%u\n",
+             channelModeName(), outputVolumePercent, screenTimeoutMinutes[screenTimeoutIndex]);
+}
+
 static bool buttonIsPressed(const ButtonState* button) {
   return gpio_get_level(button->pin) == 0;
 }
@@ -599,6 +652,7 @@ static void handleButtons() {
   } else if (leftReleased) {
     scanMode = scanMode == SCAN_ALL_CHANNELS ? SCAN_1_6_11 : SCAN_ALL_CHANNELS;
     selectFirstChannel();
+    saveUserSettings();
     dualPrintf("[flockyou] scan mode=%s start_channel=%u\n",
                channelModeName(), currentChannel);
     screenWake();
@@ -643,11 +697,13 @@ static void handleButtons() {
   if (rightReleased && rightButtonLongPressApplied) {
     screenWake();
     aipiDisplayConfirmSleepSetting(screenTimeoutMinutes[screenTimeoutIndex]);
+    saveUserSettings();
     rightButtonLongPressApplied = false;
   } else if (rightReleased) {
     volumeIndex = (volumeIndex + 1) %
                   (sizeof(volumeLevels) / sizeof(volumeLevels[0]));
     outputVolumePercent = volumeLevels[volumeIndex];
+    saveUserSettings();
     if (outputVolumePercent == 0) {
       dualPrintln("[flockyou] alert volume=MUTE");
     } else {
@@ -1448,6 +1504,7 @@ void setup() {
   // Crucial for USB-optional operation: without this, Serial.write() will
   // block indefinitely on an ESP32-S3 USB-CDC port when no host is attached.
   Serial.setTxTimeoutMs(0);
+  loadUserSettings();
   const esp_err_t batteryInit = aipiBatteryBegin();
   batteryReady = batteryInit == ESP_OK;
   delay(300);
