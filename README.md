@@ -61,10 +61,10 @@ AIPI Lite hardware:
 Those values fix the reversed colors and the static strips previously visible
 along the left and upper edges.
 
-The normal screen shows the current scan channel, signal-identity count, alert volume,
-and battery percentage. The battery footer is red below 10%, gold from 10-49%,
-and green at 50% or above. `CHG` marks active charging, and the footer blinks
-every 600 ms while charging below 50%. A detection temporarily replaces it with:
+The normal screen shows the active 2.4 GHz channel, battery percentage beside
+the channel, signal-identity count, elapsed `LAST SEEN` time, and alert volume.
+`LAST SEEN` is the elapsed time since the most recently accepted signal. A
+detection temporarily replaces this page with:
 
 - matched OUI
 - RSSI
@@ -90,10 +90,15 @@ plays the rising detection alert. Repeated packets from the same MAC remain
 rate-limited for five seconds and do not replay audio; a known MAC becomes a
 fresh audible discovery after 30 seconds out of range.
 
-The right button cycles alert volume through `MUTE`, `10%`, `50%`, and `100%`;
-nonzero values include the percent sign on-screen and play a sample immediately.
-The 10% sample is a single tone, 50% is the two-pulse heartbeat, and 100% is the
-rising new-detection chirp. Selecting mute produces no sound.
+Release the right button to cycle alert volume through `MUTE`, `10%`, `50%`,
+and `100%`; nonzero values include the percent sign on-screen and play a sample
+immediately. The detection chirp uses the selected nonzero volume for every
+new MAC identity, including a receiver-side observation that the scanner has
+counted as a signal. Selecting mute produces no sound.
+
+Hold the right button for two seconds to cycle the display sleep setting through
+`1 MIN`, `5 MIN`, and `NEVER`. Release the button to save the shown value. Any
+button press or newly accepted signal wakes the display.
 
 Both buttons are active-low and read by raw ESP-IDF GPIO number with 35 ms
 debounce. Every accepted press forces an immediate scan-screen redraw. The boot

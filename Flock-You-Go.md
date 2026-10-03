@@ -115,17 +115,18 @@ on GPIO1 switches at runtime between the complete plan and the faster
 the new plan and restarts the dwell timer.
 
 The scan screen writes the selected mode as `ALL CHANNELS` or `SCAN 1-6-11`
-above the live channel number. The right button on GPIO42 cycles the alert
-volume through `MUTE`, `10%`, `50%`, and `100%`, also shown on-screen. Both
-buttons are active-low, use internal pull-ups, and have 35 ms software
-debounce. They are configured and read through ESP-IDF `gpio_config()` and
-`gpio_get_level()` using raw GPIO numbers; this avoids Arduino board-variant
-pin translation. An accepted press immediately dismisses a detection page and
-redraws the scan screen with the new setting. Each nonzero volume selection
-plays an immediate sample: a single tone at 10%, the heartbeat pair at 50%, and
-the rising detection chirp at 100%. The ES8311 is controlled over GPIO4/GPIO5,
-receives 16 kHz I2S on GPIO14/GPIO12/GPIO11, and uses GPIO9 to enable the
-speaker amplifier only during playback.
+above the live channel number. Battery percentage appears to the right of the
+channel, `LAST SEEN` shows elapsed time since the latest accepted signal, and
+the hit counter remains below it. Release the right button on GPIO42 to cycle
+the alert volume through `MUTE`, `10%`, `50%`, and `100%`; each nonzero setting
+plays a sample immediately. Hold that same button for two seconds to select
+screen sleep `1 MIN`, `5 MIN`, or `NEVER`, then release to save it. Any button
+press or newly accepted signal wakes the display. Both buttons are active-low,
+use internal pull-ups, and have 35 ms software debounce. They are configured
+and read through ESP-IDF `gpio_config()` and `gpio_get_level()` using raw GPIO
+numbers; this avoids Arduino board-variant pin translation. The ES8311 is
+controlled over GPIO4/GPIO5, receives 16 kHz I2S on GPIO14/GPIO12/GPIO11, and
+uses GPIO9 to enable the speaker amplifier only during playback.
 
 At boot, USB serial reports the initial electrical levels for GPIO1 and GPIO42.
 An unpressed active-low button should report level `1`; pressing it should take

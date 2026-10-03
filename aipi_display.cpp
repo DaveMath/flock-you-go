@@ -68,6 +68,8 @@ uint8_t rendered_channel = 0;
 int rendered_detections = -1;
 bool rendered_all_channels = true;
 uint8_t rendered_volume = 100;
+uint32_t rendered_last_seen_at = 0;
+uint32_t rendered_last_seen_seconds = UINT32_MAX;
 int battery_percent = -1;
 bool battery_charging = false;
 bool battery_blink_visible = true;
@@ -155,7 +157,7 @@ void drawTextCondensed(int x, int y, const char* text, uint16_t foreground,
 }
 
 void renderScan(uint8_t channel, int detections, bool allChannels,
-                uint8_t volumePercent) {
+                uint8_t volumePercent, uint32_t lastSeenAt) {
   fillRect(0, 0, kWidth, kHeight, kBlack);
   fillRect(0, 0, kWidth, 22, kRed);
   drawTextCondensed(4, 3, "FLOCK-YOU-GO", kWhite, kRed, 2);
@@ -164,37 +166,57 @@ void renderScan(uint8_t channel, int detections, bool allChannels,
   fillRect(8, 42, 112, 1, kGray);
 
   char value[24];
-  snprintf(value, sizeof(value), "CHANNEL %02u", channel);
+  snprintf(value, sizeof(value), "CH %02u", channel);
   drawText(13, 50, value, kWhite, kBlack, 1);
-  snprintf(value, sizeof(value), "SIGNALS %03d", min(detections, 999));
-  drawText(13, 67, value, detections ? kGold : kWhite, kBlack, 1);
-  if (volumePercent == 0) {
-    snprintf(value, sizeof(value), "VOLUME MUTE");
-  } else {
-    snprintf(value, sizeof(value), "VOLUME %u%%", volumePercent);
-  }
-  drawText(13, 84, value, volumePercent ? kWhite : kGold, kBlack, 1);
-  char battery[20];
   if (battery_percent < 0) {
-    snprintf(battery, sizeof(battery), "BAT --");
-  } else if (battery_charging) {
-    snprintf(battery, sizeof(battery), "BAT %d%% CHG", battery_percent);
+    snprintf(value, sizeof(value), "BAT --");
   } else {
-    snprintf(battery, sizeof(battery), "BAT %d%%", battery_percent);
+    snprintf(value, sizeof(value), "BAT %d%%", battery_percent);
   }
   uint16_t batteryColor = kGreen;
   if (battery_percent < 0) batteryColor = kGray;
   else if (battery_percent < 10) batteryColor = kRed;
   else if (battery_percent < 50) batteryColor = kGold;
-  if (battery_blink_visible || !battery_charging || battery_percent >= 50) {
-    drawText(13, 108, battery, batteryColor, kBlack, 1);
+  drawText(75, 50, value, batteryColor, kBlack, 1);
+  snprintf(value, sizeof(value), "SIGNALS %03d", min(detections, 999));
+  drawText(13, 67, value, detections ? kGold : kWhite, kBlack, 1);
+  uint32_t lastSeenSeconds = 0;
+  if (lastSeenAt) lastSeenSeconds = (millis() - lastSeenAt) / 1000;
+  if (lastSeenAt) {
+    snprintf(value, sizeof(value), "LAST SEEN: %02lu:%02lu",
+             static_cast<unsigned long>(lastSeenSeconds / 60),
+             static_cast<unsigned long>(lastSeenSeconds % 60));
+  } else {
+    snprintf(value, sizeof(value), "LAST SEEN: --:--");
   }
+  drawText(13, 84, value, lastSeenAt ? kWhite : kGray, kBlack, 1);
+  if (volumePercent == 0) {
+    snprintf(value, sizeof(value), "VOLUME MUTE");
+  } else {
+    snprintf(value, sizeof(value), "VOLUME %u%%", volumePercent);
+  }
+  drawText(13, 101, value, volumePercent ? kWhite : kGold, kBlack, 1);
   flush();
   rendered_channel = channel;
   rendered_detections = detections;
   rendered_all_channels = allChannels;
   rendered_volume = volumePercent;
+  rendered_last_seen_at = lastSeenAt;
+  rendered_last_seen_seconds = lastSeenAt ? lastSeenSeconds : UINT32_MAX;
   detection_view = false;
+}
+
+void renderSleepSetting(uint8_t timeoutMinutes, const char* footer) {
+  fillRect(0, 0, kWidth, kHeight, kBlack);
+  fillRect(0, 0, kWidth, 24, kGold);
+  drawText(13, 5, "SCREEN", kBlack, kGold, 2);
+  drawText(13, 45, "SLEEP AFTER", kWhite, kBlack, 1);
+  char value[24];
+  if (timeoutMinutes == 0) snprintf(value, sizeof(value), "NEVER");
+  else snprintf(value, sizeof(value), "%u MIN", timeoutMinutes);
+  drawTextCondensed(13, 67, value, kGold, kBlack, 2);
+  drawText(13, 105, footer, kGray, kBlack, 1);
+  flush();
 }
 
 }  // namespace
@@ -238,7 +260,7 @@ bool aipiDisplayBegin() {
   delay(20);
   ready = true;
   gpio_set_level(kBacklight, 1);
-  renderScan(11, 0, true, 100);
+  renderScan(11, 0, true, 100, 0);
   return true;
 }
 
@@ -251,18 +273,39 @@ void aipiDisplaySetBattery(int percent, bool charging) {
   battery_blink_visible = true;
   battery_blink_at = millis();
   if (!detection_view) {
-    renderScan(rendered_channel, rendered_detections, rendered_all_channels, rendered_volume);
+    renderScan(rendered_channel, rendered_detections, rendered_all_channels,
+               rendered_volume, rendered_last_seen_at);
   }
 }
 
+void aipiDisplaySetBacklight(bool enabled) {
+  if (!ready) return;
+  gpio_set_level(kBacklight, enabled ? 1 : 0);
+}
+
+void aipiDisplayShowSleepSetting(uint8_t timeoutMinutes) {
+  if (!ready) return;
+  renderSleepSetting(timeoutMinutes, "RELEASE TO SAVE");
+  detection_view = true;
+  detection_until = UINT32_MAX;
+}
+
+void aipiDisplayConfirmSleepSetting(uint8_t timeoutMinutes) {
+  if (!ready) return;
+  renderSleepSetting(timeoutMinutes, "SAVED");
+  detection_view = true;
+  detection_until = millis() + 1500;
+}
+
 void aipiDisplayShowScan(uint8_t channel, int detections, bool allChannels,
-                         uint8_t volumePercent) {
+                         uint8_t volumePercent, uint32_t lastSeenAt) {
   if (!ready) return;
   if (channel == rendered_channel && detections == rendered_detections &&
-      allChannels == rendered_all_channels && volumePercent == rendered_volume) {
+      allChannels == rendered_all_channels && volumePercent == rendered_volume &&
+      lastSeenAt == rendered_last_seen_at && !detection_view) {
     return;
   }
-  renderScan(channel, detections, allChannels, volumePercent);
+  renderScan(channel, detections, allChannels, volumePercent, lastSeenAt);
 }
 
 void aipiDisplayShowDetection(const char* oui, int8_t rssi, uint8_t channel,
@@ -285,20 +328,19 @@ void aipiDisplayShowDetection(const char* oui, int8_t rssi, uint8_t channel,
 }
 
 void aipiDisplayTick(uint8_t channel, int detections, bool allChannels,
-                     uint8_t volumePercent) {
+                     uint8_t volumePercent, uint32_t lastSeenAt) {
   if (!ready) return;
   if (detection_view) {
-    if (static_cast<int32_t>(millis() - detection_until) >= 0) {
-      renderScan(channel, detections, allChannels, volumePercent);
+    if (detection_until != UINT32_MAX &&
+        static_cast<int32_t>(millis() - detection_until) >= 0) {
+      renderScan(channel, detections, allChannels, volumePercent, lastSeenAt);
     }
     return;
   }
-  if (battery_charging && battery_percent >= 0 && battery_percent < 50 &&
-      millis() - battery_blink_at >= 600) {
-    battery_blink_visible = !battery_blink_visible;
-    battery_blink_at = millis();
-    renderScan(channel, detections, allChannels, volumePercent);
+  const uint32_t lastSeenSeconds = lastSeenAt ? (millis() - lastSeenAt) / 1000 : UINT32_MAX;
+  if (lastSeenSeconds != rendered_last_seen_seconds) {
+    renderScan(channel, detections, allChannels, volumePercent, lastSeenAt);
     return;
   }
-  aipiDisplayShowScan(channel, detections, allChannels, volumePercent);
+  aipiDisplayShowScan(channel, detections, allChannels, volumePercent, lastSeenAt);
 }

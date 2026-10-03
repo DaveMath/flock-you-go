@@ -36,6 +36,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 #define LEFT_BUTTON_PIN  GPIO_NUM_1
 #define RIGHT_BUTTON_PIN GPIO_NUM_42
 #define BUTTON_DEBOUNCE_MS 35
+#define SCREEN_TIMEOUT_HOLD_MS 2000
 #define BATTERY_POLL_MS 30000
 
 #define HEARTBEAT_MS    30000
@@ -253,6 +254,14 @@ static volatile unsigned long ledOffAt = 0;
 // HB_DEVICE_ACTIVE_MS the heartbeat stops until the next new detection.
 static unsigned long fyLastTargetSeen  = 0;
 static unsigned long fyLastHeartbeatAt = 0;
+static unsigned long fyLastBogeySeenAt = 0;
+
+static const uint8_t screenTimeoutMinutes[] = {1, 5, 0};
+static size_t screenTimeoutIndex = 0;
+static unsigned long screenLastActivityAt = 0;
+static unsigned long rightButtonPressedAt = 0;
+static bool rightButtonLongPressApplied = false;
+static bool screenBacklightOn = true;
 
 // ============================================================
 // 802.11 HEADER
@@ -499,6 +508,22 @@ static void resyncButtonAfterBlockingAudio(ButtonState* button) {
   button->changedAt = millis();
 }
 
+static void screenWake() {
+  screenLastActivityAt = millis();
+  if (!screenBacklightOn) {
+    aipiDisplaySetBacklight(true);
+    screenBacklightOn = true;
+  }
+}
+
+static void screenSleepTick() {
+  const uint8_t timeoutMinutes = screenTimeoutMinutes[screenTimeoutIndex];
+  if (timeoutMinutes == 0 || !screenBacklightOn) return;
+  if (millis() - screenLastActivityAt < timeoutMinutes * 60000UL) return;
+  aipiDisplaySetBacklight(false);
+  screenBacklightOn = false;
+}
+
 static void handleButtons() {
   bool displayChanged = false;
   bool playVolumeSample = false;
@@ -507,10 +532,37 @@ static void handleButtons() {
     selectFirstChannel();
     dualPrintf("[flockyou] scan mode=%s start_channel=%u\n",
                channelModeName(), currentChannel);
+    screenWake();
     displayChanged = true;
   }
 
-  if (pressedEdge(&rightButton)) {
+  const bool rightWasPressed = rightButton.stablePressed;
+  const bool rightPressed = pressedEdge(&rightButton);
+  if (rightPressed) {
+    rightButtonPressedAt = millis();
+    rightButtonLongPressApplied = false;
+    screenWake();
+  }
+
+  if (rightButton.stablePressed && !rightButtonLongPressApplied &&
+      millis() - rightButtonPressedAt >= SCREEN_TIMEOUT_HOLD_MS) {
+    screenTimeoutIndex = (screenTimeoutIndex + 1) %
+                         (sizeof(screenTimeoutMinutes) / sizeof(screenTimeoutMinutes[0]));
+    rightButtonLongPressApplied = true;
+    screenWake();
+    aipiDisplayShowSleepSetting(screenTimeoutMinutes[screenTimeoutIndex]);
+    dualPrintf("[flockyou] screen sleep selection=%s\n",
+               screenTimeoutMinutes[screenTimeoutIndex] ?
+                   (screenTimeoutMinutes[screenTimeoutIndex] == 1 ? "1_min" : "5_min") :
+                   "never");
+  }
+
+  const bool rightReleased = rightWasPressed && !rightButton.stablePressed;
+  if (rightReleased && rightButtonLongPressApplied) {
+    screenWake();
+    aipiDisplayConfirmSleepSetting(screenTimeoutMinutes[screenTimeoutIndex]);
+    rightButtonLongPressApplied = false;
+  } else if (rightReleased) {
     volumeIndex = (volumeIndex + 1) %
                   (sizeof(volumeLevels) / sizeof(volumeLevels[0]));
     outputVolumePercent = volumeLevels[volumeIndex];
@@ -525,7 +577,8 @@ static void handleButtons() {
 
   if (displayChanged) {
     aipiDisplayShowScan(currentChannel, fyDetCount,
-                        scanMode == SCAN_ALL_CHANNELS, outputVolumePercent);
+                        scanMode == SCAN_ALL_CHANNELS, outputVolumePercent,
+                        fyLastBogeySeenAt);
   }
   if (playVolumeSample && outputVolumePercent > 0) {
     if (!aipiAudioPlayVolumeSample(outputVolumePercent)) {
@@ -1164,6 +1217,7 @@ static void drainAlertQueue() {
     // Only corroborated observations drive the physical-alert heartbeat.
     // Update before serial dedupe so repeated medium/high frames keep it alive.
     if (e.confidence >= CONFIDENCE_MEDIUM) fyLastTargetSeen = millis();
+    fyLastBogeySeenAt = millis();
 
     // Serial-rate-limit: suppress emit/beep/flash within ALERT_COOLDOWN_MS.
     if (shouldSuppressDuplicate(macStr)) continue;
@@ -1184,10 +1238,9 @@ static void drainAlertQueue() {
                  (idx >= 0) ? (int)fyDet[idx].count : 0);
     }
 
-    if (e.confidence >= CONFIDENCE_MEDIUM) {
-      aipiDisplayShowDetection(oui, e.rssi, e.channel,
-                               (idx >= 0) ? static_cast<uint16_t>(idx + 1) : 0);
-    }
+    screenWake();
+    aipiDisplayShowDetection(oui, e.rssi, e.channel,
+                             (idx >= 0) ? static_cast<uint16_t>(idx + 1) : 0);
 
     // Flask-compatible JSON line (parsed by api/flockyou.py over USB CDC).
     emitDetectionJSON(macStr, method, e.confidence, e.rssi, e.channel,
@@ -1197,7 +1250,7 @@ static void drainAlertQueue() {
     //   - NEW SIGNAL IDENTITY → two fast ascending beeps for each MAC
     //   - REPEAT   → silent; the heartbeat tick covers continued presence
     // LED flashes on every emitted detection either way.
-    if (chirpWorthy && e.confidence >= CONFIDENCE_MEDIUM) {
+    if (chirpWorthy && outputVolumePercent > 0) {
       newDetectChirp();
       // Reset the heartbeat phase so the first follow-up beep lands
       // HB_BEEP_INTERVAL_MS after the initial chirp, not mid-window.
@@ -1332,6 +1385,7 @@ void setup() {
 
   lastHeartbeat = millis();
   fyLastSaveAt  = millis();
+  screenLastActivityAt = millis();
 }
 
 void loop() {
@@ -1343,7 +1397,9 @@ void loop() {
   heartbeatTick();     // audible beep-pair while a target is still in range
   ledTick();           // turn off LED after LED_FLASH_MS
   aipiDisplayTick(currentChannel, fyDetCount,
-                  scanMode == SCAN_ALL_CHANNELS, outputVolumePercent);
+                  scanMode == SCAN_ALL_CHANNELS, outputVolumePercent,
+                  fyLastBogeySeenAt);
+  screenSleepTick();
   printHeartbeat();
   delay(1);
 }
