@@ -98,8 +98,9 @@ counted as a signal. Selecting mute produces no sound.
 
 The bottom labels are `SCAN/OFF` above the left button and `VOL/SCREEN` above
 the right button. Release the left button after a short press to switch the
-scan plan. Hold it for two seconds to turn the display off without changing the
-scan plan. Hold the right button for two seconds to enter the display-sleep
+scan plan. Hold it for two seconds to save state, stop passive receive, and
+shut the ESP32-S3 down into deep sleep. Press the left button again to wake it.
+Hold the right button for two seconds to enter the display-sleep
 selector. While held, it advances through `1 MIN`, `5 MIN`, and `NEVER` every
 two seconds; release to save the setting currently shown. Any button press or
 newly accepted signal wakes the display.

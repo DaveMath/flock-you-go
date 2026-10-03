@@ -121,8 +121,9 @@ the hit counter remains below it. Release the right button on GPIO42 to cycle
 the alert volume through `MUTE`, `10%`, `50%`, and `100%`; each nonzero setting
 plays a sample immediately. Bottom labels identify the buttons as `SCAN/OFF`
 and `VOL/SCREEN`. Release a short left-button press to change the scan plan;
-hold the left button for two seconds to turn the display off without changing
-the plan. Hold the right button for two seconds, then keep holding to cycle
+hold the left button for two seconds to save state, stop passive receive, and
+put the ESP32-S3 into deep sleep. Press the left button again to wake it. Hold
+the right button for two seconds, then keep holding to cycle
 screen sleep `1 MIN`, `5 MIN`, and `NEVER` every two seconds; release to save
 the displayed selection. Any button press or newly accepted signal wakes the
 display. Both buttons are active-low,

@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include "esp_wifi.h"
 #include "esp_err.h"
+#include "esp_sleep.h"
 #include "driver/gpio.h"
 #include <ctype.h>
 #include <string.h>
@@ -520,12 +521,37 @@ static void screenWake() {
   }
 }
 
+static void fySaveSession();
+
 static void screenSleepTick() {
   const uint8_t timeoutMinutes = screenTimeoutMinutes[screenTimeoutIndex];
   if (timeoutMinutes == 0 || !screenBacklightOn) return;
   if (millis() - screenLastActivityAt < timeoutMinutes * 60000UL) return;
   aipiDisplaySetBacklight(false);
   screenBacklightOn = false;
+}
+
+static void shutdownToDeepSleep() {
+  dualPrintln("[flockyou] shutdown requested; saving state and entering deep sleep");
+  if (fySpiffsReady && fyDirty) {
+    fySaveSession();
+  }
+  sniffingStopped = true;
+  wifiOk(esp_wifi_set_promiscuous(false), "shutdown_promiscuous");
+  wifiOk(esp_wifi_stop(), "shutdown_wifi");
+  aipiDisplaySetBacklight(false);
+  screenBacklightOn = false;
+
+  const uint64_t wakeMask = 1ULL << LEFT_BUTTON_PIN;
+  const esp_err_t wakeResult = esp_sleep_enable_ext1_wakeup(
+      wakeMask, ESP_EXT1_WAKEUP_ANY_LOW);
+  if (wakeResult != ESP_OK) {
+    dualPrintf("[flockyou] deep-sleep wake setup failed: %s (0x%x)\n",
+               esp_err_to_name(wakeResult), static_cast<unsigned>(wakeResult));
+    return;
+  }
+  delay(25);
+  esp_deep_sleep_start();
 }
 
 static void handleButtons() {
@@ -542,10 +568,8 @@ static void handleButtons() {
   const unsigned long now = millis();
   if (leftButton.stablePressed && !leftButtonLongPressApplied &&
       now - leftButtonPressedAt >= SCREEN_TIMEOUT_HOLD_MS) {
-    aipiDisplaySetBacklight(false);
-    screenBacklightOn = false;
     leftButtonLongPressApplied = true;
-    dualPrintln("[flockyou] display off by left-button long press");
+    shutdownToDeepSleep();
   }
 
   const bool leftReleased = leftWasPressed && !leftButton.stablePressed;
