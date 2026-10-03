@@ -80,10 +80,11 @@ bounded callback behavior. `aipiDisplayTick()` restores the scan view after
 
 Distinct MAC identities are displayed and stored as separate signal hits. The
 screen shows the session-wide signal-hit number, and each accepted alert plays
-its rising sound. Packet repeats for the same MAC remain rate-limited to once
-per five seconds, so three radio identities produce three visible, audible hits
-without turning one transmitter burst into an audio loop. USB serial records
-the ES8311 playback result for each alert.
+its rising sound. Packet repeats for the same MAC keep updating the on-device
+record but are rate-limited to one audible/visible alert every five minutes.
+This prevents a stationary sensor from sounding continuously while the operator
+is stopped nearby. USB serial records the ES8311 playback result for each
+accepted alert.
 
 The scan page reserves its bottom row for battery state. It shows `BAT n%`,
 adds `CHG` while GPIO8 is low, uses red below 10%, gold from 10-49%, and green

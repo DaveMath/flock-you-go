@@ -44,7 +44,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 #define HEARTBEAT_MS    30000
 #define RSSI_MIN        -100
 #define RSSI_LOW_CONFIDENCE_MIN -95
-#define ALERT_COOLDOWN_MS 5000
+#define ALERT_COOLDOWN_MS (5UL * 60UL * 1000UL)
 
 // Audio cadence: two fast ascending beeps on a NEW MAC, then while any
 // target is still in range (seen within HB_DEVICE_ACTIVE_MS), two monotone
@@ -1344,8 +1344,8 @@ static void drainAlertQueue() {
     }
 
     // Every accepted alert is audible. The per-MAC cooldown above bounds this
-    // to one chirp per five seconds, avoiding packet-burst audio loops while
-    // still confirming each visible alert to the operator.
+    // to one chirp per five minutes, preventing a stationary sensor from
+    // sounding continuously while the operator remains nearby.
     if (outputVolumePercent > 0) {
       const bool played = aipiAudioPlayNewDetection(outputVolumePercent);
       dualPrintf("[flockyou] alert audio mac=%s volume=%u%% result=%s\n",

@@ -89,9 +89,10 @@ A camera installation can expose multiple Wi-Fi/BLE identities, so the first
 three identities observed at a site appear as `SIGNAL HIT` 1, 2, and 3 rather
 than being collapsed into one presumed physical camera. Every accepted alert
 plays the rising detection chirp at the selected volume. Repeated packets from
-the same MAC remain rate-limited for five seconds, preventing an RF burst from
-becoming an audio loop while still confirming each accepted alert. USB serial
-logs whether ES8311 playback succeeded for each alert.
+the same MAC continue updating their evidence record but remain silent for five
+minutes, preventing a stationary sensor from repeatedly alerting while the
+operator is stopped nearby. USB serial logs whether ES8311 playback succeeded
+for each accepted alert.
 
 Release the right button to cycle alert volume through `MUTE`, `10%`, `50%`,
 and `100%`; nonzero values include the percent sign on-screen and play a sample
@@ -239,7 +240,7 @@ The main compile-time settings are at the top of `main.cpp`:
 | `BATTERY_POLL_MS` | 30000 | Battery refresh interval; charge changes refresh immediately |
 | `RSSI_MIN` | -100 | Medium/high-confidence weak-frame cutoff |
 | `RSSI_LOW_CONFIDENCE_MIN` | -95 | Address-only observation cutoff |
-| `ALERT_COOLDOWN_MS` | 5000 | Per-MAC output rate limit |
+| `ALERT_COOLDOWN_MS` | 300000 | Per-MAC output rate limit (5 minutes) |
 | `CHECK_ADDR1` | 1 | Receiver-side matching |
 | `CHECK_ADDR3` | 0 | Optional BSSID matching |
 | `MAX_DETECTIONS` | 200 | Local table capacity |
