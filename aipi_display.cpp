@@ -225,6 +225,22 @@ void renderSleepSetting(uint8_t timeoutMinutes, const char* footer) {
   flush();
 }
 
+void renderShutdownCountdown(uint8_t secondsRemaining) {
+  fillRect(0, 0, kWidth, kHeight, kBlack);
+  fillRect(0, 0, kWidth, 24, kRed);
+  drawText(13, 5, "POWER OFF", kWhite, kRed, 2);
+  if (secondsRemaining == 0) {
+    drawTextCondensed(13, 52, "GOODBYE", kGold, kBlack, 2);
+    drawText(13, 105, "RELEASE TO OFF", kGray, kBlack, 1);
+  } else {
+    char value[16];
+    snprintf(value, sizeof(value), "OFF IN %u", secondsRemaining);
+    drawTextCondensed(13, 53, value, kGold, kBlack, 2);
+    drawText(13, 105, "HOLD BUTTON", kGray, kBlack, 1);
+  }
+  flush();
+}
+
 }  // namespace
 
 bool aipiDisplayBegin() {
@@ -301,6 +317,13 @@ void aipiDisplayConfirmSleepSetting(uint8_t timeoutMinutes) {
   renderSleepSetting(timeoutMinutes, "SAVED");
   detection_view = true;
   detection_until = millis() + 1500;
+}
+
+void aipiDisplayShowShutdownCountdown(uint8_t secondsRemaining) {
+  if (!ready) return;
+  renderShutdownCountdown(secondsRemaining);
+  detection_view = true;
+  detection_until = UINT32_MAX;
 }
 
 void aipiDisplayShowScan(uint8_t channel, int sensors, int encounters, bool allChannels,

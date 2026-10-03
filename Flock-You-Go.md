@@ -65,6 +65,7 @@ initialization, then enable it only after `DISPON` completes.
 ```cpp
 bool aipiDisplayBegin();
 void aipiDisplaySetBattery(int percent, bool charging);
+void aipiDisplayShowShutdownCountdown(uint8_t secondsRemaining);
 void aipiDisplayShowScan(uint8_t channel, int sensors, int encounters, bool allChannels,
                          uint8_t volumePercent);
 void aipiDisplayShowDetection(const char* oui, int8_t rssi,
@@ -125,8 +126,9 @@ the hit counter remains below it. Release the right button on GPIO42 to cycle
 the alert volume through `MUTE`, `10%`, `50%`, and `100%`; each nonzero setting
 plays a sample immediately. Bottom labels identify the buttons as `SCAN/OFF`
 and `VOL/SCREEN`. Release a short left-button press to change the scan plan;
-hold it for two seconds, then release it to save state, stop passive receive,
-and put the ESP32-S3 into deep sleep. Press the left button again to wake it.
+hold it to show the `3`, `2`, `1`, then `GOODBYE` countdown. Release after
+`GOODBYE` to save state, stop passive receive, and put the ESP32-S3 into deep
+sleep. Press the left button again to wake it.
 Hold the right button for two seconds, then keep holding to cycle
 screen sleep `1 MIN`, `5 MIN`, and `NEVER` every two seconds; release to save
 the displayed selection. Any button press or newly accepted signal wakes the
@@ -140,11 +142,12 @@ uses GPIO9 to enable the speaker amplifier only during playback.
 ### Long-press shutdown design
 
 The left button action is deferred until release so short `SCAN/OFF` presses
-continue to change only the scan plan. A two-second hold instead saves any
+continue to change only the scan plan. A three-second hold instead saves any
 pending detection session only after the button is released, then disables
 passive promiscuous receive, stops Wi-Fi, turns the backlight off, and starts
-ESP32-S3 deep sleep. The device is actually powered down at the CPU/radio level
-rather than merely showing a black screen.
+ESP32-S3 deep sleep. The new three-second `3`, `2`, `1`, `GOODBYE` countdown
+makes that point of no return visible before release. The device is actually
+powered down at the CPU/radio level rather than merely showing a black screen.
 
 GPIO1 is configured as the active-low EXT1 wake source. Press it after shutdown
 to restart the normal initialization sequence, including the panel, ES8311,
@@ -152,6 +155,8 @@ scanner, and saved session. Waiting for release is necessary because holding an
 active-low wake pin during sleep would otherwise immediately wake the device.
 The right-button `VOL/SCREEN` long press remains
 independent because its job is only to select a temporary display-sleep timeout.
+An encounter wakes the display once; ongoing packets from that same sensor do
+not reset the chosen timeout.
 
 At boot, USB serial reports the initial electrical levels for GPIO1 and GPIO42.
 An unpressed active-low button should report level `1`; pressing it should take
