@@ -51,11 +51,6 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 // heartbeat beeps every HB_BEEP_INTERVAL_MS.
 #define HB_DEVICE_ACTIVE_MS    3000
 #define HB_BEEP_INTERVAL_MS    10000
-// A MAC we haven't heard from in REDISCOVER_MS counts as a fresh discovery
-// next time it shows up — fires the ascending chirp again. Shorter than a
-// Flock's burst-sleep gap would mean false chirps; longer means you'd miss
-// a drive-away/return. 30 s is a good middle ground.
-#define REDISCOVER_MS          30000
 #define NEW_CHIRP_LO_HZ        2000
 #define NEW_CHIRP_HI_HZ        2800
 #define NEW_CHIRP_NOTE_MS      55
@@ -334,14 +329,6 @@ static void ledTick() {
     ledOffAt = 0;
   }
 #endif
-}
-
-// Two fast ascending beeps — played on the FIRST sighting of a MAC.
-static void newDetectChirp() {
-  if (outputVolumePercent == 0) return;
-  if (!aipiAudioPlayNewDetection(outputVolumePercent)) {
-    dualPrintln("[flockyou] detection sound failed");
-  }
 }
 
 // Two monotone beeps — periodic heartbeat while at least one target is still
@@ -748,18 +735,12 @@ static const char* alertTypeToMethod(AlertType t) {
 }
 
 // Returns index of entry (new or updated), or -1 if table is full.
-// Returns index, and sets *outChirpWorthy = true when the caller should fire
-// the ascending new-discovery chirp. Chirp-worthy means either (a) MAC is
-// brand new to this session, or (b) MAC is known but hasn't been seen in
-// REDISCOVER_MS — i.e. it left RF range and came back.
 static int fyAddDetection(const char* mac, const char* method,
                           DetectionConfidence confidence, int8_t rssi,
-                          uint8_t ch, const char* ssid,
-                          bool* outChirpWorthy) {
+                          uint8_t ch, const char* ssid) {
   uint32_t now = millis();
   for (int i = 0; i < fyDetCount; i++) {
     if (strcasecmp(fyDet[i].mac, mac) == 0) {
-      bool rediscover = (now - fyDet[i].lastSeen) > REDISCOVER_MS;
       bool promoted = confidence > fyDet[i].confidence;
       if (fyDet[i].count < 0xFFFF) fyDet[i].count++;
       fyDet[i].lastSeen = now;
@@ -773,15 +754,10 @@ static int fyAddDetection(const char* mac, const char* method,
         strlcpy(fyDet[i].ssid, ssid, sizeof(fyDet[i].ssid));
       }
       fyDirty = true;
-      if (outChirpWorthy) {
-        *outChirpWorthy = rediscover ||
-                          (promoted && confidence >= CONFIDENCE_MEDIUM);
-      }
       return i;
     }
   }
   if (fyDetCount >= MAX_DETECTIONS) {
-    if (outChirpWorthy) *outChirpWorthy = false;
     return -1;
   }
   FYDetection& d = fyDet[fyDetCount];
@@ -797,7 +773,6 @@ static int fyAddDetection(const char* mac, const char* method,
   else                 d.ssid[0] = '\0';
   fyDetCount++;
   fyDirty = true;
-  if (outChirpWorthy) *outChirpWorthy = true;
   return fyDetCount - 1;
 }
 
@@ -1332,12 +1307,8 @@ static void drainAlertQueue() {
     const char* method = alertTypeToMethod(e.type);
 
     // Always update the on-device detection table (survives reboot via SPIFFS).
-    // chirpWorthy = true for brand-new MACs AND for MACs rediscovered after
-    // REDISCOVER_MS of silence (drove away and came back).
-    bool chirpWorthy = false;
     int idx = fyAddDetection(macStr, method, e.confidence, e.rssi, e.channel,
-                             (e.type == ALERT_SSID) ? e.ssid : nullptr,
-                             &chirpWorthy);
+                             (e.type == ALERT_SSID) ? e.ssid : nullptr);
 
     // Only corroborated observations drive the physical-alert heartbeat.
     // Update before serial dedupe so repeated medium/high frames keep it alive.
@@ -1372,15 +1343,17 @@ static void drainAlertQueue() {
       emitDetectionJSON("detection", fyDet[idx], e.frameKind);
     }
 
-    // Audio feedback:
-    //   - NEW SIGNAL IDENTITY → two fast ascending beeps for each MAC
-    //   - REPEAT   → silent; the heartbeat tick covers continued presence
-    // LED flashes on every emitted detection either way.
-    if (chirpWorthy && outputVolumePercent > 0) {
-      newDetectChirp();
-      // Reset the heartbeat phase so the first follow-up beep lands
-      // HB_BEEP_INTERVAL_MS after the initial chirp, not mid-window.
+    // Every accepted alert is audible. The per-MAC cooldown above bounds this
+    // to one chirp per five seconds, avoiding packet-burst audio loops while
+    // still confirming each visible alert to the operator.
+    if (outputVolumePercent > 0) {
+      const bool played = aipiAudioPlayNewDetection(outputVolumePercent);
+      dualPrintf("[flockyou] alert audio mac=%s volume=%u%% result=%s\n",
+                 macStr, outputVolumePercent, played ? "ok" : "failed");
+      // Reset the heartbeat phase so it does not overlap a fresh alert chirp.
       fyLastHeartbeatAt = millis();
+    } else {
+      dualPrintf("[flockyou] alert audio mac=%s volume=MUTE\n", macStr);
     }
     if (e.confidence >= CONFIDENCE_MEDIUM) ledFlash(LED_FLASH_MS);
 

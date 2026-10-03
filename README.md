@@ -87,15 +87,16 @@ display rendering, USB output, alerts, and SPIFFS writes happen from `loop()`.
 Each distinct MAC identity is intentionally counted as a separate signal hit.
 A camera installation can expose multiple Wi-Fi/BLE identities, so the first
 three identities observed at a site appear as `SIGNAL HIT` 1, 2, and 3 rather
-than being collapsed into one presumed physical camera. Every new identity
-plays the rising detection alert. Repeated packets from the same MAC remain
-rate-limited for five seconds and do not replay audio; a known MAC becomes a
-fresh audible discovery after 30 seconds out of range.
+than being collapsed into one presumed physical camera. Every accepted alert
+plays the rising detection chirp at the selected volume. Repeated packets from
+the same MAC remain rate-limited for five seconds, preventing an RF burst from
+becoming an audio loop while still confirming each accepted alert. USB serial
+logs whether ES8311 playback succeeded for each alert.
 
 Release the right button to cycle alert volume through `MUTE`, `10%`, `50%`,
 and `100%`; nonzero values include the percent sign on-screen and play a sample
 immediately. The detection chirp uses the selected nonzero volume for every
-new MAC identity, including a receiver-side observation that the scanner has
+accepted alert, including a receiver-side observation that the scanner has
 counted as a signal. Selecting mute produces no sound.
 
 The bottom labels are `SCAN/OFF` above the left button and `VOL/SCREEN` above
