@@ -189,7 +189,10 @@ bool aipiAudioPlayVolumeSample(uint8_t volumePercent) {
 }
 
 bool aipiAudioPlayNewDetection(uint8_t volumePercent) {
-  return playTwoTone(2000, 2800, 55, 25, volumePercent);
+  // Detection alerts use the same volume-specific profiles as the button
+  // samples. Those longer notes were validated on the AiPi speaker; the old
+  // 55 ms high-frequency chirp could be too brief to hear in the field.
+  return aipiAudioPlayVolumeSample(volumePercent);
 }
 
 bool aipiAudioPlayHeartbeat(uint8_t volumePercent) {
