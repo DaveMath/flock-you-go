@@ -178,7 +178,7 @@ Observations are ranked before alerting:
 
 - **High:** direct Flock OUI plus a wildcard probe signature observed on the air
 - **Medium:** direct Flock transmitter OUI in a management frame, or configured Flock SSID
-- **Low:** receiver/BSSID address match or data-frame match for the direct Flock OUI
+- **Low:** receiver, BSSID, or data-frame match for the direct Flock OUI
 
 Low-confidence observations are logged and persisted for analysis, but do not
 take over the screen or trigger physical alerts. Medium and high confidence
@@ -334,6 +334,7 @@ The main compile-time settings are at the top of `main.cpp`:
 | `ALERT_COOLDOWN_MS` | 300000 | Per-MAC output rate limit (5 minutes) |
 | `ENCOUNTER_ABSENCE_MS` | 600000 | Absence required before the same fingerprint becomes a new encounter (10 minutes) |
 | `CHECK_ADDR1` | 1 | Receiver-side matching |
+| `CHECK_ADDR3` | 1 | BSSID matching for the direct Flock OUI |
 | `CHECK_ADDR3` | 0 | Optional BSSID matching |
 | `MAX_DETECTIONS` | 200 | Local table capacity |
 | `AUTOSAVE_INTERVAL_MS` | 60000 | SPIFFS save interval |

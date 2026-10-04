@@ -68,7 +68,7 @@ static const uint8_t allScanChannels[] = {11, 6, 1, 10, 5, 2, 9, 4, 3, 8, 7};
 
 #define ENABLE_SSID_MATCH 1
 #define CHECK_ADDR1 1   // dst/rx — catches Flock STAs receiving probe responses
-#define CHECK_ADDR3 0   // bssid fallback for randomised addr2
+#define CHECK_ADDR3 1   // BSSID fallback when the direct Flock OUI is carried in addr3
 static const char* target_ssid_keywords[] = { "flock" };
 static const size_t SSID_KEYWORD_COUNT = sizeof(target_ssid_keywords) / sizeof(target_ssid_keywords[0]);
 
