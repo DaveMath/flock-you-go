@@ -1,6 +1,6 @@
 # Flock-You Go
 
-This application is written through the harness [Krystalize.AI](https://Krystalize.AI) - get your Mac M series private local LLM with memory.
+This application is written through the harness [Krystalize.AI](https://Krystalize.AI) - get your Mac M series a private local LLM with memory.
 
 Portable, passive 2.4 GHz awareness firmware for the X-Origin AIPI Lite
 ESP32-S3. It watches locally for configured wireless signatures, records
