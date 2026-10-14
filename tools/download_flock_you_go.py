@@ -21,7 +21,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import sys
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -36,6 +36,8 @@ CSV_FIELDS = [
     "last_seen_at",
     "anchor_time",
     "anchor_source",
+    "session_source",
+    "storage_path",
     "anchor_uptime_ms",
     "first_seen_ms",
     "last_seen_ms",
@@ -56,12 +58,22 @@ CSV_FIELDS = [
     "schema",
 ]
 
+MAC_RE = re.compile(r"^[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}$")
+
 
 @dataclass(frozen=True)
 class DownloadResult:
     records: list[dict[str, Any]]
     raw_lines: list[str]
     anchor_uptime_ms: int
+
+
+@dataclass(frozen=True)
+class FlatRecord:
+    source: str
+    storage_path: str
+    record: dict[str, Any]
+    anchor_uptime_ms: int | None = None
 
 
 def parse_datetime(value: str) -> datetime:
@@ -124,6 +136,23 @@ def find_anchor_uptime(records: Iterable[dict[str, Any]]) -> int:
     if max_seen:
         return max_seen
     raise ValueError("cannot determine anchor uptime; no uptime_ms fields found")
+
+
+def channel_frequency(channel: Any) -> int | str:
+    try:
+        ch = int(channel)
+    except (TypeError, ValueError):
+        return ""
+    if 1 <= ch <= 14:
+        return 2407 + 5 * ch
+    return ""
+
+
+def oui_from_mac(mac: str) -> str:
+    mac = (mac or "").lower()
+    if not MAC_RE.fullmatch(mac):
+        return ""
+    return ":".join(mac.split(":")[:3])
 
 
 def select_port(port: str) -> str:
@@ -191,6 +220,71 @@ def download_from_device(port: str, baud: int, timeout_seconds: float) -> Downlo
     return DownloadResult(records=records, raw_lines=raw_lines, anchor_uptime_ms=anchor_uptime_ms)
 
 
+def flatten_records(records: Iterable[dict[str, Any]], current_anchor_uptime_ms: int) -> list[FlatRecord]:
+    flat: list[FlatRecord] = []
+    previous: list[FlatRecord] = []
+
+    for outer in records:
+        event = outer.get("event")
+        if event in {"snapshot", "detection"}:
+            flat.append(FlatRecord(source="current_session", storage_path="/session.json", record=outer))
+            continue
+
+        if event == "previous_session_snapshot":
+            inner = outer.get("record")
+            if not isinstance(inner, dict):
+                continue
+            record = {
+                "event": "snapshot",
+                "schema": outer.get("schema", "flock-you-go.usb.v2"),
+                "uptime_ms": outer.get("uptime_ms", 0),
+                "first_seen_ms": inner.get("first", inner.get("first_seen_ms", 0)),
+                "last_seen_ms": inner.get("last", inner.get("last_seen_ms", inner.get("first", 0))),
+                "mac_address": inner.get("mac", inner.get("mac_address", "")),
+                "detection_method": inner.get("detection_method") or f"wifi_{inner.get('method', '')}",
+                "confidence": inner.get("confidence", ""),
+                "rssi": inner.get("rssi", ""),
+                "channel": inner.get("channel", ""),
+                "frequency": inner.get("frequency", channel_frequency(inner.get("channel"))),
+                "count": inner.get("count", ""),
+                "observations": inner.get("observations", inner.get("count", "")),
+                "encounters": inner.get("encounters", ""),
+                "frame_kind": inner.get("frame_kind", ""),
+                "ssid": inner.get("ssid", ""),
+            }
+            record["oui"] = inner.get("oui") or oui_from_mac(str(record["mac_address"]))
+            record["fingerprint_id"] = inner.get("fingerprint_id") or f"wifi_{inner.get('method', '')}:{record['mac_address']}"
+            previous.append(
+                FlatRecord(
+                    source="previous_session",
+                    storage_path=str(outer.get("path") or "/prev_session.json"),
+                    record=record,
+                )
+            )
+
+    previous_anchor = 0
+    for item in previous:
+        record = item.record
+        previous_anchor = max(
+            previous_anchor,
+            int(record.get("last_seen_ms") or 0),
+            int(record.get("first_seen_ms") or 0),
+        )
+    if previous_anchor <= 0:
+        previous_anchor = current_anchor_uptime_ms
+
+    flat.extend(
+        FlatRecord(
+            source=item.source,
+            storage_path=item.storage_path,
+            record=item.record,
+            anchor_uptime_ms=previous_anchor,
+        )
+        for item in previous
+    )
+    return flat
+
+
 def normalize_records(
     records: Iterable[dict[str, Any]],
     anchor_time: datetime,
@@ -198,14 +292,13 @@ def normalize_records(
     anchor_uptime_ms: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for record in records:
-        event = record.get("event")
-        if event not in {"snapshot", "detection"}:
-            continue
+    for item in flatten_records(records, anchor_uptime_ms):
+        record = item.record
+        row_anchor_uptime_ms = item.anchor_uptime_ms or anchor_uptime_ms
         first_seen_ms = int(record.get("first_seen_ms") or record.get("uptime_ms") or 0)
         last_seen_ms = int(record.get("last_seen_ms") or first_seen_ms)
-        first_delta_ms = max(0, anchor_uptime_ms - first_seen_ms)
-        last_delta_ms = max(0, anchor_uptime_ms - last_seen_ms)
+        first_delta_ms = max(0, row_anchor_uptime_ms - first_seen_ms)
+        last_delta_ms = max(0, row_anchor_uptime_ms - last_seen_ms)
         found_at = anchor_time - timedelta(milliseconds=first_delta_ms)
         last_seen_at = anchor_time - timedelta(milliseconds=last_delta_ms)
 
@@ -215,7 +308,9 @@ def normalize_records(
                 "last_seen_at": iso(last_seen_at),
                 "anchor_time": iso(anchor_time),
                 "anchor_source": anchor_source,
-                "anchor_uptime_ms": anchor_uptime_ms,
+                "session_source": item.source,
+                "storage_path": item.storage_path,
+                "anchor_uptime_ms": row_anchor_uptime_ms,
                 "first_seen_ms": first_seen_ms,
                 "last_seen_ms": last_seen_ms,
                 "age_at_anchor_seconds": round(first_delta_ms / 1000.0, 3),
@@ -293,8 +388,11 @@ def main() -> int:
     if args.raw_jsonl:
         write_jsonl(args.raw_jsonl, raw_lines)
 
+    current_count = sum(1 for row in rows if row["session_source"] == "current_session")
+    previous_count = sum(1 for row in rows if row["session_source"] == "previous_session")
     print(f"Wrote {len(rows)} normalized detection row(s) to {args.csv}")
-    print(f"Anchor: {anchor_source}={iso(anchor_time)} uptime_ms={anchor_uptime_ms}")
+    print(f"Rows: current_session={current_count} previous_session={previous_count}")
+    print(f"Anchor: {anchor_source}={iso(anchor_time)} current_uptime_ms={anchor_uptime_ms}")
     if not args.collected_at:
         print("No --collected-at supplied; normalized times are anchored to download time.")
     return 0
